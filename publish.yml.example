@@ -1,0 +1,62 @@
+# ==============================================================================
+# Publish Configuration
+# ==============================================================================
+# This file defines the release process for a specific project.
+# It is read by the global `publish` command on the dev-server.
+#
+# A copy of this file, named `publish.yml`, should be placed in the root
+# directory of every project you wish to automate.
+# ==============================================================================
+
+# A human-readable name for the project, used in notifications.
+project_name: "My Awesome Project"
+
+# The name of the branch that holds the latest development code.
+# This is often a temporary feature branch (e.g., feature/add-login).
+development_branch: "develop"
+
+# The name of the primary branch for releases.
+main_branch: "main"
+
+# The file that contains the current version number (e.g., 1.2.0).
+# This file should exist in your project repository.
+version_file: "VERSION.txt"
+
+# How to increment the version, based on Semantic Versioning (MAJOR.MINOR.PATCH).
+#   - "patch": For backward-compatible bug fixes. (e.g., 1.2.3 -> 1.2.4)
+#   - "minor": For new features that are backward-compatible. (e.g., 1.2.3 -> 1.3.0)
+#   - "major": For breaking changes that are not backward-compatible. (e.g., 1.2.3 -> 2.0.0)
+# The `publish` command will use this to suggest the next version number.
+version_bump_strategy: "patch"
+
+# A list of commands to run before creating a release.
+# These are typically tests or build steps. If any of these commands fail,
+# the publish process will be aborted.
+pre_publish_steps:
+  - echo "Running pre-publish checks..."
+  - echo "Running tests..."
+  # - pytest  # Example for a Python project
+  # - npm test # Example for a Node.js project
+
+# A list of commands to run after a successful publish.
+# The `notify` command can be used here to send alerts.
+# The variables ${NEW_VERSION} and ${PROJECT_NAME} will be available.
+post_publish_steps:
+  - echo "Version ${NEW_VERSION} has been successfully published."
+  # Example: Send a notification to the default Slack channel.
+  - notify --channel slack "🚀 Version ${NEW_VERSION} of ${PROJECT_NAME} has been published."
+  # Example: Send an email with a custom subject line.
+  - notify --channel email --subject "New Release: ${PROJECT_NAME} v${NEW_VERSION}" "The build and deploy process has been initiated."
+
+# Whether to delete the development_branch from the remote repository (origin)
+# after it has been successfully merged into the main_branch.
+# The local branch will not be affected.
+delete_branch_after_merge: true
+
+# If true, the `publish` command will use the current git branch as the
+# development_branch, overriding the 'development_branch' setting above.
+use_current_branch: false
+
+# If true, the `publish` command will default to dry-run mode, which simulates
+# the entire process without making any changes.
+default_to_dry_run: false

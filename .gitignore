@@ -17,3 +17,4 @@ ssh/
 PROJECT_DESCRIPTION.md
 CHANGELOG.md
 notify.conf
+publish.yml
