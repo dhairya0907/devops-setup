@@ -1,0 +1,44 @@
+# ==============================================================================
+# Global Configuration for the 'notify' Command
+# ==============================================================================
+# This file contains the secrets and settings for different notification channels.
+# For security, its permissions should be restricted:
+# sudo chmod 600 /etc/notify.conf
+# sudo chown root:root /etc/notify.conf
+
+[slack]
+# To get your Slack Bot Token:
+# 1. Go to: https://api.slack.com/apps and create a new app "From scratch".
+# 2. In the sidebar, go to "OAuth & Permissions".
+# 3. Under "Scopes" -> "Bot Token Scopes", add the `chat:write` permission.
+# 4. Go back to the top and click "Install to Workspace".
+# 5. Copy the "Bot User OAuth Token" (it starts with `xoxb-`) and paste it below.
+# 6. You must also invite the bot to any channel you want it to post in.
+bot_token="YOUR_SLACK_BOT_TOKEN_HERE"
+
+# The default Slack Channel ID to post messages to.
+# To get the Channel ID, right-click the channel name in Slack and select "Copy link".
+# The ID is the part that starts with 'C' (e.g., C024BE91L).
+default_channel="YOUR_DEFAULT_CHANNEL_ID"
+
+
+[email]
+# Configuration for sending emails via Gmail SMTP.
+# This uses curl's native SMTP capabilities, so no other tools are needed.
+smtp_url="smtps://smtp.gmail.com:465"
+smtp_user="your-gmail-address@gmail.com"
+
+# IMPORTANT: For Gmail, you must generate an "App Password". Your regular
+# Google account password will NOT work here.
+# 1. Go to your Google Account settings: https://myaccount.google.com/
+# 2. Go to "Security".
+# 3. Under "How you sign in to Google", enable 2-Step Verification.
+# 4. After enabling it, go to "App passwords".
+# 5. Select "Mail" as the app and "Other (Custom name)" as the device.
+# 6. Give it a name (e.g., "DevOps Server") and click "Generate".
+# 7. Copy the 16-character password and paste it below.
+smtp_password="your-16-character-app-password"
+
+# The "From" address can be the same as your smtp_user for Gmail.
+from_address="your-gmail-address@gmail.com"
+default_recipient="recipient@example.com"

@@ -16,3 +16,4 @@ ssh/
 # Internal files
 PROJECT_DESCRIPTION.md
 CHANGELOG.md
+notify.conf
