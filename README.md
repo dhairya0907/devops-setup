@@ -1,6 +1,9 @@
 # DevOps Setup: Self-Hosted CI/CD Infrastructure
 
-Scripts to automate the setup of a self-hosted CI/CD environment using Multipass and Docker. This repository provides the foundation for a secure, private development and production server infrastructure for personal projects.
+Scripts to automate the setup of a self-hosted CI/CD environment using Multipass and Docker.  
+This repository provides the foundation for a secure, private development and production server infrastructure for personal projects.
+
+---
 
 ## Architecture Overview
 
@@ -12,12 +15,17 @@ This setup creates a professional "pull over push" CI/CD model, keeping your pro
 2. **`prod-server` (Runtime Server):**  
    A minimal, secure server whose only job is to run the Docker registry and the final application containers. It is triggered by a webhook from the `dev-server` to pull and deploy new images.
 
+---
+
 ## Scripts in this Repository
 
 This repository provides the scripts to provision and manage the self-hosted CI/CD pipeline.
 
 - **`setup_vm.sh`:**  
   The foundational script. Provisions the `dev-server` and `prod-server` VMs with all necessary tools, security hardening, and configurations.
+
+- **`publish.sh`:**  
+  A global command to automate the release process for a project from the `dev-server`.
 
 - **`notify.sh`:**  
   A global notification utility script for sending messages to Slack and Email.
@@ -27,6 +35,8 @@ This repository provides the scripts to provision and manage the self-hosted CI/
 
 - **`uninstall_docker.sh`:**  
   A standalone utility script to completely remove Docker and Git from a system.
+
+---
 
 ## Getting Started: Provisioning the Infrastructure
 
@@ -42,7 +52,7 @@ Before running the setup script, you must have the following installed on your l
 
 1. **Configure the Environment:**  
    The script is configured using a `.env` file. If you run the script without one, it will automatically generate a template for you.  
-   **Set a strong `REGISTRY_PASSWORD`** before proceeding.
+   **Set a strong `REGISTRY_PASSWORD` before proceeding.**
 
 2. **Make the script executable:**
 
@@ -86,9 +96,41 @@ The setup script automatically adds aliases to your local `~/.ssh/config` file. 
   ssh prod-server
   ```
 
+---
+
 ## Utility Scripts
 
-This repository also contains standalone scripts for system administration. These are not required for the main workflow but can be useful for manual tasks.
+This repository also contains standalone scripts for system administration and development workflows.
+
+- **To publish a new release:**  
+  The `publish.sh` script should be installed as a global command on your build server (e.g., `dev-server`).
+
+  - **Installation:**
+
+    ```bash
+    sudo cp publish.sh /usr/local/bin/publish && sudo chmod +x /usr/local/bin/publish
+    ```
+
+  - **Usage (from a project directory):**
+
+    ```bash
+    publish
+    ```
+
+- **To send a notification:**  
+  The `notify.sh` script should be installed globally on any server that needs to send alerts.
+
+  - **Installation:**
+
+    ```bash
+    sudo cp notify.sh /usr/local/bin/notify && sudo chmod +x /usr/local/bin/notify
+    ```
+
+  - **Usage:**
+
+    ```bash
+    notify --channel slack "Hello!"
+    ```
 
 - **To install Docker and Git on any Ubuntu machine:**
 
@@ -104,12 +146,7 @@ This repository also contains standalone scripts for system administration. Thes
   ./uninstall_docker.sh
   ```
 
-- **To send a notification (requires manual setup of `/etc/notify.conf`):**
-
-  ```bash
-  chmod +x notify.sh
-  ./notify.sh --channel slack "Hello from the new notification system!"
-  ```
+---
 
 ## License
 
