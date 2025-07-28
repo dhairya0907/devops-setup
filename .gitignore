@@ -12,3 +12,7 @@ ssh/
 # Temporary files
 *.swp
 *~
+
+# Internal files
+PROJECT_DESCRIPTION.md
+CHANGELOG.md
