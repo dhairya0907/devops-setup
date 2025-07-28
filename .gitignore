@@ -1,0 +1,14 @@
+# Secrets and Credentials
+.env
+ssh/
+
+# macOS specific
+.DS_Store
+
+# Editor-specific folders
+.vscode/
+.idea/
+
+# Temporary files
+*.swp
+*~
