@@ -1,4 +1,4 @@
-# DevOps Setup: Self-**Hosted** CI/CD Infrastructure
+# DevOps Setup: Self-Hosted CI/CD Infrastructure
 
 Scripts to automate the setup of a self-hosted CI/CD environment using Multipass and Docker. This repository provides the foundation for a secure, private development and production server infrastructure for personal projects.
 
@@ -18,6 +18,9 @@ This repository provides the scripts to provision and manage the self-hosted CI/
 
 - **`setup_vm.sh`:**  
   The foundational script. Provisions the `dev-server` and `prod-server` VMs with all necessary tools, security hardening, and configurations.
+
+- **`notify.sh`:**  
+  A global notification utility script for sending messages to Slack and Email.
 
 - **`install_docker.sh`:**  
   A standalone utility script to install Docker and Git on a fresh Ubuntu system.
@@ -85,7 +88,7 @@ The setup script automatically adds aliases to your local `~/.ssh/config` file. 
 
 ## Utility Scripts
 
-This repository also contains standalone scripts for managing Docker and Git installations. These are not required for the main workflow but can be useful for manual system administration.
+This repository also contains standalone scripts for system administration. These are not required for the main workflow but can be useful for manual tasks.
 
 - **To install Docker and Git on any Ubuntu machine:**
 
@@ -99,6 +102,13 @@ This repository also contains standalone scripts for managing Docker and Git ins
   ```bash
   chmod +x uninstall_docker.sh
   ./uninstall_docker.sh
+  ```
+
+- **To send a notification (requires manual setup of `/etc/notify.conf`):**
+
+  ```bash
+  chmod +x notify.sh
+  ./notify.sh --channel slack "Hello from the new notification system!"
   ```
 
 ## License
