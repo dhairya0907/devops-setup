@@ -7,10 +7,10 @@ This repository provides the foundation for a secure, private development and pr
 
 ## Architecture Overview
 
-This setup creates a professional "pull-based" CI/CD model, keeping your production environment secure and minimal.
+This setup creates a professional "pull-based" CI/CD model, where the `docker-compose.yml` is treated as version-controlled application code, ensuring consistent deployments, keeping your production environment secure and minimal.
 
 1. **`dev-server` (Build Server):**  
-   Acts as a self-hosted CI runner. It is responsible for checking out code from a Git remote, building Docker images, and pushing them to the production registry.
+   Acts as a self-hosted CI runner. It checks out code from a Git remote, builds Docker images, pushes them to the production registry, and securely copies the project's configuration (including `docker-compose.yml`) to the production server.
 
 2. **`prod-server` (Runtime Server):**  
    A minimal, secure server whose only job is to run the Docker registry and the final application containers.  
