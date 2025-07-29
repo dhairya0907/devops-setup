@@ -24,6 +24,9 @@ This repository provides the scripts to provision and manage the self-hosted CI/
 - **`setup_vm.sh`:**  
   The foundational script. Provisions the `dev-server` and `prod-server` VMs with all necessary tools, security hardening, and configurations.
 
+- **`project-init.sh`:**  
+  An interactive utility script to set up a new project with the required CI/CD configuration files.
+
 - **`publish.sh`:**  
   A global command to automate the release process for a project from the `dev-server`.
 
@@ -102,35 +105,32 @@ The setup script automatically adds aliases to your local `~/.ssh/config` file. 
 
 This repository also contains standalone scripts for system administration and development workflows.
 
-- **To publish a new release:**  
-  The `publish.sh` script should be installed as a global command on your build server (e.g., `dev-server`).
+- **To initialize a new project:**
 
-  - **Installation:**
+  ```bash
+  # Run this from an empty project directory on your dev-server
+  chmod +x project-init.sh
+  ./project-init.sh
+  ```
 
-    ```bash
-    sudo cp publish.sh /usr/local/bin/publish && sudo chmod +x /usr/local/bin/publish
-    ```
+- **To publish a new release:**
 
-  - **Usage (from a project directory):**
+  ```bash
+  # Installation:
+  sudo cp publish.sh /usr/local/bin/publish && sudo chmod +x /usr/local/bin/publish
 
-    ```bash
-    publish
-    ```
+  # Usage (from a project directory):
+  publish
+  ```
 
-- **To send a notification:**  
-  The `notify.sh` script should be installed globally on any server that needs to send alerts.
+- **To send a notification (requires manual setup of `/etc/notify.conf`):**
 
-  - **Installation:**
+  ```bash
+  # Installation:
+  sudo cp notify.sh /usr/local/bin/notify && sudo chmod +x /usr/local/bin/notify
 
-    ```bash
-    sudo cp notify.sh /usr/local/bin/notify && sudo chmod +x /usr/local/bin/notify
-    ```
-
-  - **Usage:**
-
-    ```bash
-    notify --channel slack "Hello!"
-    ```
+  notify --channel slack "Hello!"
+  ```
 
 - **To install Docker and Git on any Ubuntu machine:**
 
