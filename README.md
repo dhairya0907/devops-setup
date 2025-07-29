@@ -24,6 +24,9 @@ This repository provides the scripts to provision and manage the self-hosted CI/
 - **`setup_vm.sh`:**  
   The foundational script. Provisions the `dev-server` and `prod-server` VMs with all necessary tools, security hardening, and configurations.
 
+- **`ci_runner.sh`:**  
+  The self-hosted CI script that runs on the `dev-server` to monitor, build, and push new releases.
+
 - **`project-init.sh`:**  
   An interactive utility script to set up a new project with the required CI/CD configuration files.
 
@@ -121,6 +124,15 @@ This repository also contains standalone scripts for system administration and d
 
   # Usage (from a project directory):
   publish
+  ```
+
+- **To run the CI process (as the automation user on `dev-server`):**
+
+  ```bash
+  # This script monitors for new releases and builds/pushes images.
+  # It should be configured and run in the background.
+  chmod +x ci_runner.sh
+  nohup ./ci_runner.sh <prod_ip> <port> <interval> &
   ```
 
 - **To send a notification (requires manual setup of `/etc/notify.conf`):**
