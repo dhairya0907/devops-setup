@@ -1,0 +1,18 @@
+# ==============================================================================
+# Example Monitored Projects for CI Runner
+# ==============================================================================
+#
+# This is an example file. Copy this to /home/automation/ci-runner/projects.list
+# on the dev-server and add the full Git SSH URLs for the repositories you
+# want the CI runner to monitor.
+#
+# Add one repository URL per line. Lines starting with # are ignored.
+#
+# ==============================================================================
+
+# Example using GitHub
+git@github.com:your-username/your-first-project.git
+git@github.com:your-username/your-second-project.git
+
+# Example using GitLab
+# git@gitlab.com:your-username/another-project.git
