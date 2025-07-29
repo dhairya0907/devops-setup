@@ -1,0 +1,17 @@
+# ==============================================================================
+# Example Monitored Projects for Deployment Poller
+# ==============================================================================
+#
+# This is an example file. Copy this to /home/ubuntu/deploy-runner/projects-prod.list
+# on the prod-server and add the names of the projects you want to automatically
+# deploy.
+#
+# The name MUST match the 'project_name' defined in that project's publish.yml file.
+#
+# Add one project name per line. Lines starting with # are ignored.
+#
+# ==============================================================================
+
+# Example Project Names
+MyFirstAPI
+MyWebApp
