@@ -7,13 +7,14 @@ This repository provides the foundation for a secure, private development and pr
 
 ## Architecture Overview
 
-This setup creates a professional "pull over push" CI/CD model, keeping your production environment secure and minimal.
+This setup creates a professional "pull-based" CI/CD model, keeping your production environment secure and minimal.
 
 1. **`dev-server` (Build Server):**  
-   Acts as a self-hosted CI runner. It is responsible for checking out code from GitHub (via the `automation` user), building Docker images, and pushing them to the production registry.
+   Acts as a self-hosted CI runner. It is responsible for checking out code from a Git remote, building Docker images, and pushing them to the production registry.
 
 2. **`prod-server` (Runtime Server):**  
-   A minimal, secure server whose only job is to run the Docker registry and the final application containers. It is triggered by a webhook from the `dev-server` to pull and deploy new images.
+   A minimal, secure server whose only job is to run the Docker registry and the final application containers.  
+   It actively monitors the registry for new images and automatically pulls and deploys them when found.
 
 ---
 
@@ -26,6 +27,12 @@ This repository provides the scripts to provision and manage the self-hosted CI/
 
 - **`ci_runner.sh`:**  
   The self-hosted CI script that runs on the `dev-server` to monitor, build, and push new releases.
+
+- **`deployment_poller.sh`:**  
+  The self-hosted CD script that runs on the `prod-server` to monitor the registry and trigger deployments.
+
+- **`deploy.sh`:**  
+  The script that performs the zero-downtime deployment on the `prod-server`.
 
 - **`project-init.sh`:**  
   An interactive utility script to set up a new project with the required CI/CD configuration files.
@@ -58,7 +65,7 @@ Before running the setup script, you must have the following installed on your l
 
 1. **Configure the Environment:**  
    The script is configured using a `.env` file. If you run the script without one, it will automatically generate a template for you.  
-   **Set a strong `REGISTRY_PASSWORD` before proceeding.**
+   **Set a strong `REGISTRY_PASSWORD`** before proceeding.
 
 2. **Make the script executable:**
 
@@ -133,6 +140,15 @@ This repository also contains standalone scripts for system administration and d
   # It should be configured and run in the background.
   chmod +x ci_runner.sh
   nohup ./ci_runner.sh <prod_ip> <port> <interval> &
+  ```
+
+- **To run the CD process (on `prod-server`):**
+
+  ```bash
+  # This script monitors the registry and deploys new images.
+  # It should be configured and run in the background.
+  chmod +x deployment_poller.sh deploy.sh
+  nohup ./deployment_poller.sh <port> <interval> &
   ```
 
 - **To send a notification (requires manual setup of `/etc/notify.conf`):**
