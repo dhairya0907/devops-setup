@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # Self-Hosted CI Runner Script
-# Version: 1.0.0
+# Version: 2.0.0
 # Date: 2025-07-29
 # ==============================================================================
 #
@@ -12,7 +12,8 @@
 # separate projects.list file) for new version tags.
 #
 # When a new tag is found, it builds a Docker image, pushes it to the private
-# production registry, and syncs the project's secrets. All output is logged.
+# production registry, and syncs the project's configuration files (including
+# docker-compose.yml and secrets). All output is logged.
 #
 # Usage:
 #   1. Create a projects.list file at /home/automation/ci-runner/projects.list
@@ -96,18 +97,13 @@ function get_latest_tag() {
     git --git-dir="$bare_repo_dir" tag --list --sort=-v:refname | head -n 1
 }
 
-# Builds and pushes a Docker image for a specific tag.
+# Builds and pushes a Docker image from a pre-cloned directory.
 function build_and_push() {
-    local repo_url=$1
+    local temp_clone_dir=$1
     local tag=$2
     local project_name=$3
-    local temp_clone_dir="${BASE_DIR}/clones/${project_name}"
     
     echo "   | Building image for tag: ${tag}"
-    
-    # Clone the specific tag into a temporary directory
-    rm -rf "$temp_clone_dir"
-    git clone --branch "$tag" "$repo_url" "$temp_clone_dir" > /dev/null 2>&1
     
     local image_name="${REGISTRY_URL}/${project_name}:${tag#v}" # Removes the 'v' prefix for the image tag
 
@@ -117,24 +113,31 @@ function build_and_push() {
     echo "   | Pushing image to registry..."
     docker push "$image_name" > /dev/null
 
-    # Clean up the temporary clone
-    rm -rf "$temp_clone_dir"
     echo "   | Build and push complete."
 }
 
-# Syncs secrets from the local secrets directory to the production server.
-function sync_secrets() {
+# Syncs configuration (docker-compose.yml and secrets) to the production server.
+function sync_configs() {
     local project_name=$1
+    local temp_clone_dir=$2
     local local_secrets_dir="/home/automation/secrets/${project_name}"
     local remote_project_dir="/home/ubuntu/${project_name}"
 
+    echo "   | Syncing configuration files to production server..."
+    # Ensure the remote project directory exists
+    ssh "ubuntu@${PROD_SERVER_IP}" "mkdir -p ${remote_project_dir}"
+
+    # Copy the docker-compose.yml from the cloned repository
+    scp "${temp_clone_dir}/docker-compose.yml" "ubuntu@${PROD_SERVER_IP}:${remote_project_dir}/docker-compose.yml" > /dev/null
+    echo "   | -> docker-compose.yml synced."
+
+    # Copy any files from the corresponding secrets directory
     if [ -d "$local_secrets_dir" ]; then
-        echo "   | Secrets directory found. Syncing to production server..."
         # Use scp to securely copy the entire directory contents
         scp -r "${local_secrets_dir}/." "ubuntu@${PROD_SERVER_IP}:${remote_project_dir}/" > /dev/null
-        echo "   | Secrets synced successfully."
+        echo "   | -> Secrets directory synced successfully."
     else
-        echo "   | No secrets directory found at '${local_secrets_dir}'. Skipping sync."
+        echo "   | -> No secrets directory found at '${local_secrets_dir}'. Skipping."
     fi
 }
 
@@ -160,7 +163,6 @@ while true; do
     mapfile -t PROJECTS_TO_MONITOR < <(grep -v -e '^#' -e '^[[:space:]]*$' "$PROJECT_LIST_FILE")
     
     for repo_url in "${PROJECTS_TO_MONITOR[@]}"; do
-        # Extract the repository name from the full URL (e.g., LLMApi from git@github.com:dhairya0907/LLMApi.git)
         repo_name=$(basename "$repo_url" .git)
         bare_repo_dir="${BASE_DIR}/repos/${repo_name}.git"
         state_file="${BASE_DIR}/state/${repo_name}_last_tag.txt"
@@ -180,17 +182,20 @@ while true; do
         elif [ "$latest_tag" != "$last_deployed_tag" ]; then
             echo "✅ New release found! Version: ${latest_tag}"
             
-            # To get the project_name from the publish.yml, we need to clone it first
-            temp_clone_dir_for_config="${BASE_DIR}/clones/${repo_name}-config"
-            rm -rf "$temp_clone_dir_for_config"
-            git clone --branch "$latest_tag" "$repo_url" "$temp_clone_dir_for_config" > /dev/null 2>&1
+            # Perform a single clone for this release process
+            temp_clone_dir="${BASE_DIR}/clones/${repo_name}"
+            rm -rf "$temp_clone_dir"
+            git clone --branch "$latest_tag" "$repo_url" "$temp_clone_dir" > /dev/null 2>&1
             
-            eval $(parse_yaml "${temp_clone_dir_for_config}/publish.yml" "config_")
+            # Read the project_name from the publish.yml inside the clone
+            eval $(parse_yaml "${temp_clone_dir}/publish.yml" "config_")
             PROJECT_NAME_FROM_CONFIG=${config_project_name}
-            rm -rf "$temp_clone_dir_for_config"
             
-            build_and_push "$repo_url" "$latest_tag" "$PROJECT_NAME_FROM_CONFIG"
-            sync_secrets "$PROJECT_NAME_FROM_CONFIG"
+            build_and_push "$temp_clone_dir" "$latest_tag" "$PROJECT_NAME_FROM_CONFIG"
+            sync_configs "$PROJECT_NAME_FROM_CONFIG" "$temp_clone_dir"
+
+            # Clean up the temporary clone after all operations are complete
+            rm -rf "$temp_clone_dir"
 
             echo "$latest_tag" > "$state_file"
             echo "🎉 Successfully processed release ${latest_tag} for ${PROJECT_NAME_FROM_CONFIG}."
