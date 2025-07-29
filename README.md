@@ -22,31 +22,31 @@ This setup creates a professional "pull-based" CI/CD model, where the `docker-co
 
 This repository provides the scripts to provision and manage the self-hosted CI/CD pipeline.
 
-- **`setup_vm.sh`:**  
+- **`scripts/provision/setup_vm.sh`:**  
   The foundational script. Provisions the `dev-server` and `prod-server` VMs with all necessary tools, security hardening, and configurations.
 
-- **`ci_runner.sh`:**  
+- **`scripts/ci/ci_runner.sh`:**  
   The self-hosted CI script that runs on the `dev-server` to monitor, build, and push new releases.
 
-- **`deployment_poller.sh`:**  
+- **`scripts/cd/deployment_poller.sh`:**  
   The self-hosted CD script that runs on the `prod-server` to monitor the registry and trigger deployments.
 
-- **`deploy.sh`:**  
+- **`scripts/cd/deploy.sh`:**  
   The script that performs the zero-downtime deployment on the `prod-server`.
 
-- **`project-init.sh`:**  
+- **`scripts/utils/project-init.sh`:**  
   An interactive utility script to set up a new project with the required CI/CD configuration files.
 
-- **`publish.sh`:**  
+- **`scripts/utils/publish.sh`:**  
   A global command to automate the release process for a project from the `dev-server`.
 
-- **`notify.sh`:**  
+- **`scripts/utils/notify.sh`:**  
   A global notification utility script for sending messages to Slack and Email.
 
-- **`install_docker.sh`:**  
+- **`scripts/install/install_docker.sh`:**  
   A standalone utility script to install Docker and Git on a fresh Ubuntu system.
 
-- **`uninstall_docker.sh`:**  
+- **`scripts/install/uninstall_docker.sh`:**  
   A standalone utility script to completely remove Docker and Git from a system.
 
 ---
@@ -70,7 +70,7 @@ Before running the setup script, you must have the following installed on your l
 2. **Make the script executable:**
 
    ```bash
-   chmod +x setup_vm.sh
+   chmod +x scripts/provision/setup_vm.sh
    ```
 
 3. **Run the script (in order):**
@@ -78,13 +78,13 @@ Before running the setup script, you must have the following installed on your l
    - First, set up the production server:
 
      ```bash
-     ./setup_vm.sh prod
+     ./scripts/provision/setup_vm.sh prod
      ```
 
    - Second, set up the development server (replace the path with your own):
 
      ```bash
-     ./setup_vm.sh dev /Users/your-user/Developer
+     ./scripts/provision/setup_vm.sh dev /Users/your-user/Developer
      ```
 
 ### 3. Connect to Your VMs
@@ -119,15 +119,15 @@ This repository also contains standalone scripts for system administration and d
 
   ```bash
   # Run this from an empty project directory on your dev-server
-  chmod +x project-init.sh
-  ./project-init.sh
+  chmod +x scripts/utils/project-init.sh
+  ./scripts/utils/project-init.sh
   ```
 
 - **To publish a new release:**
 
   ```bash
   # Installation:
-  sudo cp publish.sh /usr/local/bin/publish && sudo chmod +x /usr/local/bin/publish
+  sudo cp scripts/utils/publish.sh /usr/local/bin/publish && sudo chmod +x /usr/local/bin/publish
 
   # Usage (from a project directory):
   publish
@@ -138,8 +138,8 @@ This repository also contains standalone scripts for system administration and d
   ```bash
   # This script monitors for new releases and builds/pushes images.
   # It should be configured and run in the background.
-  chmod +x ci_runner.sh
-  nohup ./ci_runner.sh <prod_ip> <port> <interval> &
+  chmod +x scripts/ci/ci_runner.sh
+  nohup ./scripts/ci/ci_runner.sh <prod_ip> <port> <interval> &
   ```
 
 - **To run the CD process (on `prod-server`):**
@@ -147,15 +147,15 @@ This repository also contains standalone scripts for system administration and d
   ```bash
   # This script monitors the registry and deploys new images.
   # It should be configured and run in the background.
-  chmod +x deployment_poller.sh deploy.sh
-  nohup ./deployment_poller.sh <port> <interval> &
+  chmod +x scripts/cd/deployment_poller.sh scripts/cd/deploy.sh
+  nohup ./scripts/cd/deployment_poller.sh <port> <interval> &
   ```
 
 - **To send a notification (requires manual setup of `/etc/notify.conf`):**
 
   ```bash
   # Installation:
-  sudo cp notify.sh /usr/local/bin/notify && sudo chmod +x /usr/local/bin/notify
+  sudo cp scripts/utils/notify.sh /usr/local/bin/notify && sudo chmod +x /usr/local/bin/notify
 
   notify --channel slack "Hello!"
   ```
@@ -163,15 +163,15 @@ This repository also contains standalone scripts for system administration and d
 - **To install Docker and Git on any Ubuntu machine:**
 
   ```bash
-  chmod +x install_docker.sh
-  ./install_docker.sh
+  chmod +x scripts/install/install_docker.sh
+  ./scripts/install/install_docker.sh
   ```
 
 - **To completely remove Docker and Git:**
 
   ```bash
-  chmod +x uninstall_docker.sh
-  ./uninstall_docker.sh
+  chmod +x scripts/install/uninstall_docker.sh
+  ./scripts/install/uninstall_docker.sh
   ```
 
 ---
