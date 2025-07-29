@@ -15,9 +15,6 @@ project_name: "My Awesome Project"
 # This is often a temporary feature branch (e.g., feature/add-login).
 development_branch: "develop"
 
-# The name of the primary branch for releases.
-main_branch: "main"
-
 # The file that contains the current version number (e.g., 1.2.0).
 # This file should exist in your project repository.
 version_file: "VERSION.txt"
