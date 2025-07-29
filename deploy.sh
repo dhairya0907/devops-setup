@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # Deployment Script
-# Version: 1.0.0
+# Version: 2.0.0
 # Date: 2025-07-29
 # ==============================================================================
 #
@@ -10,12 +10,10 @@
 # This script performs a zero-downtime deployment for a specific project.
 # It is designed to be called by the `deployment_poller.sh` script.
 #
-# It updates the image tag in the project's docker-compose.yml, pulls the
-# new image from the local registry, and redeploys the service.
+# It pulls the new image from the local registry and redeploys the service.
+# It logs the old container state before the deployment into a versioned log file.
 #
 # Usage:
-#   This script is not intended to be run manually.
-#   The poller will execute it like this:
 #   ./deploy.sh <project_name> <new_version_tag> <registry_port>
 #
 # ==============================================================================
@@ -34,10 +32,10 @@ NEW_VERSION=$2
 REGISTRY_PORT=$3
 REGISTRY_URL="localhost:${REGISTRY_PORT}"
 
-# The base directory where all project deployment configurations are stored.
 PROJECTS_BASE_DIR="/home/ubuntu"
 PROJECT_DIR="${PROJECTS_BASE_DIR}/${PROJECT_NAME}"
 COMPOSE_FILE="${PROJECT_DIR}/docker-compose.yml"
+LOG_FILE="${PROJECT_DIR}/deployment_v${NEW_VERSION}.log"
 
 # --- SCRIPT LOGIC ---
 
@@ -54,27 +52,25 @@ if [ ! -f "$COMPOSE_FILE" ]; then
     exit 1
 fi
 
-# 2. Update docker-compose.yml
-echo "⚙️  Updating image tag in ${COMPOSE_FILE}..."
-# This `sed` command finds the line with `image:` and replaces the tag with the new version.
-# It's designed to work even if the line has spaces. The `g` flag is not strictly necessary
-# but is good practice. The `-i` flag edits the file in-place.
-sed -i -E "s|image:.*${PROJECT_NAME}:.*|image: ${REGISTRY_URL}/${PROJECT_NAME}:${NEW_VERSION}|g" "$COMPOSE_FILE"
-echo "✅ docker-compose.yml updated."
-
-# 3. Pull the new image
-# We navigate into the project directory to ensure docker-compose commands work correctly.
 cd "$PROJECT_DIR"
 
-echo "⚙️  Pulling new image from local registry..."
-docker compose pull > /dev/null
-echo "✅ Image pulled successfully."
+# 2. Log currently running container info
+echo "📝 Logging current container state..." | tee -a "$LOG_FILE"
+echo "---- $(date '+%Y-%m-%d %H:%M:%S') ----" >> "$LOG_FILE"
+
+docker ps --filter "name=${PROJECT_NAME}" --format "{{.Names}} -> {{.Image}}" | tee -a "$LOG_FILE"
+
+echo "🗂️  Logged current image(s) before deployment." | tee -a "$LOG_FILE"
+
+# 3. Pull the new image
+echo "⚙️  Pulling new image from local registry..." | tee -a "$LOG_FILE"
+docker compose pull >> "$LOG_FILE" 2>&1
+echo "✅ Image pulled successfully." | tee -a "$LOG_FILE"
 
 # 4. Redeploy the service
-echo "⚙️  Performing zero-downtime redeployment..."
-# The `up -d` command will only recreate containers whose configuration or image has changed.
-docker compose up -d
-echo "✅ Service redeployed."
+echo "⚙️  Performing zero-downtime redeployment..." | tee -a "$LOG_FILE"
+docker compose up -d >> "$LOG_FILE" 2>&1
+echo "✅ Service redeployed." | tee -a "$LOG_FILE"
 
-echo "🎉 Deployment for ${PROJECT_NAME} version ${NEW_VERSION} complete."
+echo "🎉 Deployment for ${PROJECT_NAME} version ${NEW_VERSION} complete." | tee -a "$LOG_FILE"
 exit 0
