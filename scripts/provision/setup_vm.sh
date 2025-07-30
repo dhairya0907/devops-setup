@@ -38,6 +38,10 @@ if [ ! -f .env ]; then
 # --- General Settings ---
 TIMEZONE="Asia/Kolkata"
 
+# --- Background Service Intervals (in seconds) ---
+CI_RUNNER_INTERVAL=60
+DEPLOYMENT_POLLER_INTERVAL=60
+
 # --- Production Docker Registry Settings ---
 REGISTRY_USER="automation"
 REGISTRY_PASSWORD="change-this-strong-password"
@@ -205,30 +209,30 @@ echo "🚀 Stage [$CURRENT_STAGE/10]: $STAGE_DESC..."
 ((CURRENT_STAGE++))
 
 echo "⚙️  Installing Docker prerequisites, Git, and JQ..."
-multipass exec "$VM_NAME" -- bash -c '
-    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get update -y > /dev/null
-    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common net-tools git jq > /dev/null
-'
+multipass exec "$VM_NAME" -- sudo bash <<'END_INSTALL_PREREQS'
+    DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get update -y > /dev/null
+    DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common net-tools git jq > /dev/null
+END_INSTALL_PREREQS
 
 echo "⚙️  Adding Docker GPG key and repository..."
-multipass exec "$VM_NAME" -- bash -c '
-    sudo install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    sudo chmod a+r /etc/apt/keyrings/docker.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-' > /dev/null
+multipass exec "$VM_NAME" -- sudo bash <<'END_ADD_GPG'
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+END_ADD_GPG
 
 echo "⚙️  Installing Docker Engine..."
-multipass exec "$VM_NAME" -- bash -c '
-    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get update -y  > /dev/null
-    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin  > /dev/null
-'
+multipass exec "$VM_NAME" -- sudo bash <<'END_INSTALL_DOCKER'
+    DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get update -y  > /dev/null
+    DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin  > /dev/null
+END_INSTALL_DOCKER
 
 echo "⚙️  Performing post-installation steps..."
-multipass exec "$VM_NAME" -- bash -c '
-    sudo usermod -aG docker ubuntu > /dev/null
-    echo "1" | sudo update-alternatives --config iptables > /dev/null
-'
+multipass exec "$VM_NAME" -- sudo bash <<'END_POST_INSTALL'
+    usermod -aG docker ubuntu > /dev/null
+    echo "1" | update-alternatives --config iptables > /dev/null
+END_POST_INSTALL
 
 echo "⚙️  Restarting VM to apply group changes..."
 multipass stop "$VM_NAME" > /dev/null
@@ -245,20 +249,25 @@ echo ""
 echo "🚀 Stage [$CURRENT_STAGE/10]: $STAGE_DESC..."
 ((CURRENT_STAGE++))
 
-echo "⚙️  Transferring all scripts to a temporary location on the VM..."
-multipass transfer --recursive "${REPO_ROOT}/scripts" "${VM_NAME}:/tmp/devops-setup-scripts" > /dev/null
-echo "✅ Scripts transferred."
+echo "⚙️  Transferring scripts and examples to the VM..."
+multipass transfer --recursive "${REPO_ROOT}/scripts" "${VM_NAME}:/tmp/scripts" > /dev/null
+multipass transfer --recursive "${REPO_ROOT}/examples" "${VM_NAME}:/tmp/examples" > /dev/null
+echo "✅ Scripts and examples transferred."
 
 echo "⚙️  Installing global commands..."
 if [ "$ENV_TYPE" == "dev" ]; then
-    multipass exec "$VM_NAME" -- sudo cp /tmp/devops-setup-scripts/utils/project-init.sh /usr/local/bin/project-init
-    multipass exec "$VM_NAME" -- sudo cp /tmp/devops-setup-scripts/utils/publish.sh /usr/local/bin/publish
-    multipass exec "$VM_NAME" -- sudo cp /tmp/devops-setup-scripts/utils/notify.sh /usr/local/bin/notify
-    multipass exec "$VM_NAME" -- sudo chmod +x /usr/local/bin/*
+    multipass exec "$VM_NAME" -- sudo bash <<'END_DEV_INSTALL'
+        cp /tmp/scripts/utils/project-init.sh /usr/local/bin/project-init
+        cp /tmp/scripts/utils/publish.sh /usr/local/bin/publish
+        cp /tmp/scripts/utils/notify.sh /usr/local/bin/notify
+        chmod +x /usr/local/bin/*
+END_DEV_INSTALL
     echo "✅ Global commands 'project-init', 'publish', and 'notify' installed."
 else # prod
-    multipass exec "$VM_NAME" -- sudo cp /tmp/devops-setup-scripts/utils/notify.sh /usr/local/bin/notify
-    multipass exec "$VM_NAME" -- sudo chmod +x /usr/local/bin/notify
+    multipass exec "$VM_NAME" -- sudo bash <<'END_PROD_INSTALL'
+        cp /tmp/scripts/utils/notify.sh /usr/local/bin/notify
+        chmod +x /usr/local/bin/notify
+END_PROD_INSTALL
     echo "✅ Global command 'notify' installed."
 fi
 
@@ -267,16 +276,17 @@ echo ""
 echo "🚀 Stage [$CURRENT_STAGE/10]: $STAGE_DESC..."
 if [ "$ENV_TYPE" == "prod" ]; then
     echo "📦 [PROD] Deploying self-hosted authenticated Docker registry..."
-    multipass exec "$VM_NAME" -- bash -c '
+    multipass exec "$VM_NAME" -- sudo bash -c '
         docker pull registry:2 > /dev/null 2>&1
-        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y apache2-utils > /dev/null
-        mkdir -p ~/registry/auth
-        htpasswd -B -c -b ~/registry/auth/htpasswd '"$REGISTRY_USER"' '"$REGISTRY_PASSWORD"' > /dev/null
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y apache2-utils > /dev/null
+        mkdir -p /home/ubuntu/registry/auth
+        chown ubuntu:ubuntu /home/ubuntu/registry -R
+        htpasswd -B -c -b /home/ubuntu/registry/auth/htpasswd '"$REGISTRY_USER"' '"$REGISTRY_PASSWORD"' > /dev/null 2>&1
         docker run -d \
           -p '"$REGISTRY_PORT"':5000 \
           --restart=always \
           --name registry \
-          -v ~/registry/auth:/auth \
+          -v /home/ubuntu/registry/auth:/auth \
           -e "REGISTRY_AUTH=htpasswd" \
           -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
           -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
@@ -285,7 +295,7 @@ if [ "$ENV_TYPE" == "prod" ]; then
     echo "✅ [PROD] Docker registry container is running with authentication."
 
     echo "⚙️  [PROD] Configuring Docker to trust local registry..."
-    multipass exec "$VM_NAME" -- bash -c 'echo '\''{"insecure-registries": ["localhost:'"$REGISTRY_PORT"'"]}'\'' | sudo tee /etc/docker/daemon.json > /dev/null'
+    multipass exec "$VM_NAME" -- sudo bash -c 'echo '\''{"insecure-registries": ["localhost:'"$REGISTRY_PORT"'"]}'\'' | sudo tee /etc/docker/daemon.json > /dev/null'
     multipass exec "$VM_NAME" -- sudo systemctl restart docker
     echo "✅ [PROD] Docker daemon configured and restarted."
 else
@@ -298,13 +308,13 @@ echo ""
 echo "🚀 Stage [$CURRENT_STAGE/10]: $STAGE_DESC..."
 if [ "$ENV_TYPE" == "dev" ]; then
     echo "📦 [DEV] Installing Python 3.13 and tools..."
-    multipass exec "$VM_NAME" -- bash -c '
-        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get update -y > /dev/null
-        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y software-properties-common > /dev/null
-        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 add-apt-repository -y ppa:deadsnakes/ppa > /dev/null
-        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get update -y > /dev/null
-        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y python3.13 python3.13-venv > /dev/null
-    '
+    multipass exec "$VM_NAME" -- sudo bash <<'END_PYTHON_INSTALL'
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get update -y > /dev/null
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y software-properties-common > /dev/null
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 add-apt-repository -y ppa:deadsnakes/ppa > /dev/null
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get update -y > /dev/null
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y python3.13 python3.13-venv > /dev/null
+END_PYTHON_INSTALL
     echo "✅ [DEV] Python 3.13 installed."
 
     echo "👤 [DEV] Creating dedicated 'automation' user..."
@@ -382,16 +392,16 @@ echo "🚀 Stage [$CURRENT_STAGE/9]: $STAGE_DESC..."
 
 if [ "$ENV_TYPE" == "prod" ]; then
     echo "🛡️  Installing UFW and Fail2Ban..."
-    multipass exec "$VM_NAME" -- bash -c 'sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y ufw fail2ban > /dev/null'
+    multipass exec "$VM_NAME" -- sudo bash -c 'DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y ufw fail2ban > /dev/null'
 
     echo "⚙️  Configuring Firewall..."
-    multipass exec "$VM_NAME" -- bash -c 'sudo ufw default deny incoming > /dev/null'
-    multipass exec "$VM_NAME" -- bash -c 'sudo ufw default allow outgoing > /dev/null'
-    multipass exec "$VM_NAME" -- bash -c 'sudo ufw allow ssh > /dev/null'
-    multipass exec "$VM_NAME" -- bash -c 'sudo ufw allow http > /dev/null'
-    multipass exec "$VM_NAME" -- bash -c 'sudo ufw allow https > /dev/null'
-    multipass exec "$VM_NAME" -- bash -c 'sudo ufw allow '"$REGISTRY_PORT"'/tcp > /dev/null'
-    multipass exec "$VM_NAME" -- bash -c 'sudo ufw --force enable > /dev/null'
+    multipass exec "$VM_NAME" -- sudo bash -c 'ufw default deny incoming > /dev/null'
+    multipass exec "$VM_NAME" -- sudo bash -c 'ufw default allow outgoing > /dev/null'
+    multipass exec "$VM_NAME" -- sudo bash -c 'ufw allow ssh > /dev/null'
+    multipass exec "$VM_NAME" -- sudo bash -c 'ufw allow http > /dev/null'
+    multipass exec "$VM_NAME" -- sudo bash -c 'ufw allow https > /dev/null'
+    multipass exec "$VM_NAME" -- sudo bash -c 'ufw allow '"$REGISTRY_PORT"'/tcp > /dev/null'
+    multipass exec "$VM_NAME" -- sudo bash -c 'ufw --force enable > /dev/null'
     echo "✅ Firewall enabled. Fail2Ban active."
 else
     echo "⏭️  Skipping security hardening for ${ENV_TYPE} environment."
@@ -405,18 +415,18 @@ if [ "$ENV_TYPE" == "dev" ]; then
     echo "⚙️  [DEV] Configuring Docker to trust and log in to prod-server registry..."
     PROD_IP=$(multipass info prod-server | grep IPv4 | awk '{print $2}' || echo "not_found")
     if [ "$PROD_IP" != "not_found" ]; then
-        multipass exec "$VM_NAME" -- bash -c "echo '{\"insecure-registries\": [\"${PROD_IP}:${REGISTRY_PORT}\"]}' | sudo tee /etc/docker/daemon.json > /dev/null"
+        multipass exec "$VM_NAME" -- sudo bash -c "echo '{\"insecure-registries\": [\"${PROD_IP}:${REGISTRY_PORT}\"]}' | sudo tee /etc/docker/daemon.json > /dev/null"
         multipass exec "$VM_NAME" -- sudo systemctl restart docker
         sleep 5
         
         AUTH_STRING=$(echo -n "${REGISTRY_USER}:${REGISTRY_PASSWORD}" | base64)
         DOCKER_CONFIG_JSON="{\"auths\": {\"${PROD_IP}:${REGISTRY_PORT}\": {\"auth\": \"${AUTH_STRING}\"}}}"
         
-        multipass exec "$VM_NAME" -- sudo --login --user automation bash -c "
+        multipass exec "$VM_NAME" -- sudo --login --user automation bash <<END_DOCKER_CONFIG
             mkdir -p ~/.docker
             echo '${DOCKER_CONFIG_JSON}' > ~/.docker/config.json
             chmod 600 ~/.docker/config.json
-        "
+END_DOCKER_CONFIG
         echo "✅ [DEV] Docker on dev-server is now configured for the 'automation' user."
     else
         echo "⚠️  [DEV] Could not find prod-server to automatically configure Docker registry access."
@@ -443,19 +453,20 @@ from_address="${EMAIL_FROM_ADDRESS}"
 default_recipient="${EMAIL_DEFAULT_RECIPIENT}"
 EOC
 )
-multipass exec "$VM_NAME" -- sudo bash -c "cat > /etc/notify.conf" <<< "$NOTIFY_CONFIG"
-multipass exec "$VM_NAME" -- sudo chmod 600 /etc/notify.conf
+multipass exec "$VM_NAME" -- sudo bash -c "cat > /etc/notify.conf && chmod 600 /etc/notify.conf" <<< "$NOTIFY_CONFIG"
 echo "✅ /etc/notify.conf generated from .env secrets."
 
 if [ "$ENV_TYPE" == "dev" ]; then
     echo "⚙️  [DEV] Setting up and starting CI runner service..."
     PROD_IP=$(multipass info prod-server | grep IPv4 | awk '{print $2}')
-    multipass exec "$VM_NAME" -- sudo --login --user automation bash -c "
-        mkdir -p ~/ci-runner
-        cp /tmp/devops-setup-scripts/ci/ci_runner.sh ~/ci-runner/
-        cp /tmp/devops-setup-scripts/examples/projects.list.example ~/ci-runner/projects.list
-        chmod +x ~/ci-runner/ci_runner.sh
-    "
+    multipass exec "$VM_NAME" -- sudo bash <<'END_CI_SETUP'
+        mkdir -p /home/automation/ci-runner/logs
+        mkdir -p /home/automation/ci-runner/state
+        cp /tmp/scripts/ci/ci_runner.sh /home/automation/ci-runner/
+        touch /home/automation/ci-runner/projects.list
+        chmod +x /home/automation/ci-runner/ci_runner.sh
+        chown -R automation:automation /home/automation/ci-runner
+END_CI_SETUP
     
     CI_RUNNER_SERVICE=$(cat <<EOC
 [Unit]
@@ -466,7 +477,7 @@ After=network-online.target
 User=automation
 Group=automation
 WorkingDirectory=/home/automation/ci-runner
-ExecStart=/home/automation/ci-runner/ci_runner.sh ${PROD_IP} ${REGISTRY_PORT} 60
+ExecStart=/home/automation/ci-runner/ci_runner.sh ${PROD_IP} ${REGISTRY_PORT} ${CI_RUNNER_INTERVAL}
 Restart=always
 RestartSec=10
 
@@ -482,12 +493,14 @@ EOC
 
 else # prod
     echo "⚙️  [PROD] Setting up and starting deployment poller service..."
-    multipass exec "$VM_NAME" -- bash -c "
-        mkdir -p /home/ubuntu/deploy-runner
-        cp /tmp/devops-setup-scripts/cd/deploy.sh /home/ubuntu/deploy-runner/
-        cp /tmp/devops-setup-scripts/cd/deployment_poller.sh /home/ubuntu/deploy-runner/
-        cp /tmp/devops-setup-scripts/examples/projects-prod.list.example /home/ubuntu/deploy-runner/projects-prod.list
+    multipass exec "$VM_NAME" -- sudo bash -c "
+        mkdir -p /home/ubuntu/deploy-runner/logs
+        mkdir -p /home/ubuntu/deploy-runner/state
+        cp /tmp/scripts/cd/deploy.sh /home/ubuntu/deploy-runner/
+        cp /tmp/scripts/cd/deployment_poller.sh /home/ubuntu/deploy-runner/
+        touch /home/ubuntu/deploy-runner/projects-prod.list
         chmod +x /home/ubuntu/deploy-runner/*.sh
+        chown -R ubuntu:ubuntu /home/ubuntu/deploy-runner
     "
 
     DEPLOYMENT_POLLER_SERVICE=$(cat <<EOC
@@ -500,7 +513,7 @@ Requires=docker.service
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/deploy-runner
-ExecStart=/home/ubuntu/deploy-runner/deployment_poller.sh ${REGISTRY_PORT} 60
+ExecStart=/home/ubuntu/deploy-runner/deployment_poller.sh ${REGISTRY_PORT} ${DEPLOYMENT_POLLER_INTERVAL}
 Restart=always
 RestartSec=10
 
@@ -516,7 +529,7 @@ EOC
 fi
 
 # Final cleanup of transferred scripts
-multipass exec "$VM_NAME" -- sudo rm -rf /tmp/devops-setup-scripts
+multipass exec "$VM_NAME" -- sudo rm -rf /tmp/scripts /tmp/examples
 
 echo ""
 echo "🎉 =============================================== 🎉"
@@ -552,9 +565,9 @@ echo ""
 echo "💡 NEXT STEPS:"
 if [ "$ENV_TYPE" == "dev" ]; then
     echo "   1. SSH into the dev server as the automation user: ssh dev-server-automation"
-    echo "   2. Edit the project list: nano ~/ci-runner/projects.list"
+    echo "   2. Edit the project list: vim ~/ci-runner/projects.list"
     echo "   3. Add your project secret files to: ~/secrets/<project_name>/"
 else # prod
     echo "   1. SSH into the prod server: ssh prod-server"
-    echo "   2. Edit the project list: nano ~/deploy-runner/projects-prod.list"
+    echo "   2. Edit the project list: vim ~/deploy-runner/projects-prod.list"
 fi
