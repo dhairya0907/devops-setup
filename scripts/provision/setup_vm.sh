@@ -1,38 +1,38 @@
 #!/bin/bash
 
 # ==============================================================================
-# General Multipass VM Setup Script for a Central Dev/Prod Server
-# Version: 1.0.0
-# Date: 2025-07-28
+# Master Multipass VM Setup Script for a Central Dev/Prod Server
+# Version: 2.0.0
+# Date: 2025-07-30
 # ==============================================================================
 #
 # Description:
-# This script is a self-contained utility to automate the creation of a
-# development (build) OR production (runtime) VM. It is designed for a
-# self-hosted CI/CD pipeline.
+# This script is a self-contained utility to automate the creation AND
+# configuration of a complete self-hosted CI/CD pipeline.
 #
-# It includes pre-flight checks, an authenticated Docker registry (for prod),
-# security hardening (for prod), a dedicated automation user (for dev),
-# system updates, timezone configuration, and developer tools (for dev).
+# It provisions the VMs, hardens the production server, and deploys all
+# necessary utility scripts and background services.
 #
 # Usage:
-#   1. Create a `.env` file (or let the script create one for you).
-#   2. Make this script executable: `chmod +x setup_vm.sh`
-#   3. From the script's directory, run:
-#      - For production:  `./setup_vm.sh prod`
-#      - For development: `./setup_vm.sh dev /path/to/your/local/developer/folder`
+#   1. Ensure all scripts (publish.sh, ci_runner.sh, etc.) are in their
+#      correct subdirectories (scripts/utils/, scripts/ci/, etc.).
+#   2. Create a `.env` file (or let the script create one for you).
+#   3. Make this script executable: `chmod +x scripts/provision/setup_vm.sh`
+#   4. From the root of the `devops-setup` repository, run:
+#      - For production:  `./scripts/provision/setup_vm.sh prod`
+#      - For development: `./scripts/provision/setup_vm.sh dev /path/to/your/local/developer/folder`
 #
 # ==============================================================================
 
 set -e
-trap 'echo "❌ Installation failed at stage [$((CURRENT_STAGE - 1))/8]: $STAGE_DESC. Exiting."' ERR
+trap 'echo "❌ Installation failed at stage [$((CURRENT_STAGE - 1))/10]: $STAGE_DESC. Exiting."' ERR
 
 # --- CONFIGURATION ---
 if [ ! -f .env ]; then
     echo "⚠️  .env file not found. Creating a default one."
     cat > .env << EOL
 # =================================================
-# VM and Server Configuration
+# Global Server Configuration
 # =================================================
 
 # --- General Settings ---
@@ -40,29 +40,39 @@ TIMEZONE="Asia/Kolkata"
 
 # --- Production Docker Registry Settings ---
 REGISTRY_USER="automation"
-REGISTRY_PASSWORD=""
+REGISTRY_PASSWORD="change-this-strong-password"
 REGISTRY_PORT="5000"
+
+# --- Notification Settings (Slack) ---
+SLACK_BOT_TOKEN="YOUR_SLACK_BOT_TOKEN_HERE"
+SLACK_DEFAULT_CHANNEL="YOUR_DEFAULT_CHANNEL_ID"
+
+# --- Notification Settings (Email) ---
+EMAIL_SMTP_URL="smtps://smtp.gmail.com:465"
+EMAIL_SMTP_USER="your-gmail-address@gmail.com"
+EMAIL_SMTP_PASSWORD="your-16-character-app-password"
+EMAIL_FROM_ADDRESS="your-gmail-address@gmail.com"
+EMAIL_DEFAULT_RECIPIENT="recipient@example.com"
 EOL
-    echo "✅ Default .env file created. Please review and edit it if necessary."
-    echo "⚠️  The REGISTRY_PASSWORD is empty. You MUST set a strong password before using this script in production."
+    echo "✅ Default .env file created. Please review and edit it with your secrets."
     echo "   Press [Enter] to continue..."
     read
 fi
 
 export $(grep -v '^#' .env | xargs)
 
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+# --- SCRIPT LOGIC ---
+REPO_ROOT=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )/../.." &> /dev/null && pwd )
 CURRENT_STAGE=1
 STAGE_DESC="Initializing Setup"
 
-echo "🚀 Stage [$CURRENT_STAGE/8]: $STAGE_DESC..."
+echo "🚀 Stage [$CURRENT_STAGE/10]: $STAGE_DESC..."
 ((CURRENT_STAGE++))
 
 STAGE_DESC="Performing Pre-flight Checks"
 echo "⚙️  Performing pre-flight checks..."
 if ! command -v multipass &> /dev/null; then
     echo "❌ Error: The 'multipass' command could not be found."
-    echo "Please install Multipass first: https://multipass.run/install"
     exit 1
 fi
 echo "✅ Multipass is installed."
@@ -70,7 +80,6 @@ echo "✅ Multipass is installed."
 echo "⚙️  Validating script arguments..."
 if [[ "$1" != "dev" && "$1" != "prod" ]]; then
     echo "❌ Error: Invalid environment type. Please specify 'dev' or 'prod'."
-    echo "Usage: $0 [dev|prod] [path_or_skip]"
     exit 1
 fi
 
@@ -79,13 +88,11 @@ LOCAL_MOUNT_PATH=$2
 
 if [ "$ENV_TYPE" == "dev" ] && [ -z "$LOCAL_MOUNT_PATH" ]; then
     echo "❌ Error: For 'dev' environment, you must provide a local path to mount."
-    echo "Usage: $0 dev /path/to/your/folder"
     exit 1
 fi
 
-# Check for registry password only when setting up a prod server
 if [ "$ENV_TYPE" == "prod" ] && [ -z "$REGISTRY_PASSWORD" ]; then
-    echo "❌ REGISTRY_PASSWORD is not set. Please edit the .env file and set a strong password."
+    echo "❌ REGISTRY_PASSWORD is not set in .env file."
     exit 1
 fi
 echo "✅ Arguments and required files are valid."
@@ -102,26 +109,24 @@ else
     DISK="50G"
 fi
 
-LOCAL_SSH_DIR="ssh"
+LOCAL_SSH_DIR="${REPO_ROOT}/ssh"
 VM_SSH_KEY_PATH="${LOCAL_SSH_DIR}/${VM_NAME}.key"
-GITHUB_SSH_KEY_PATH="${LOCAL_SSH_DIR}/${VM_NAME}_github.key"
 AUTOMATION_SSH_KEY_PATH="${LOCAL_SSH_DIR}/${VM_NAME}_automation.key"
 
 STAGE_DESC="Provisioning Virtual Machine"
 echo ""
-echo "🚀 Stage [$CURRENT_STAGE/8]: $STAGE_DESC..."
+echo "🚀 Stage [$CURRENT_STAGE/10]: $STAGE_DESC..."
 ((CURRENT_STAGE++))
 
 echo "🔍 Checking if VM '${VM_NAME}' already exists..."
 if multipass info "${VM_NAME}" > /dev/null 2>&1; then
     echo "✅ VM '${VM_NAME}' already exists. Skipping entire setup."
-    echo "   To start from scratch, first run: multipass delete ${VM_NAME} && multipass purge"
     exit 0
 fi
 echo "⚙️  VM does not exist. Proceeding with creation..."
 
-mkdir -p "${SCRIPT_DIR}/${LOCAL_SSH_DIR}"
-echo "⚙️  Launching VM: ${VM_NAME} (CPUs: ${CPUS}, Mem: ${MEM}, Disk: ${DISK}). This may take a moment..."
+mkdir -p "${LOCAL_SSH_DIR}"
+echo "⚙️  Launching VM: ${VM_NAME}..."
 multipass launch 24.04 --name "$VM_NAME" --cpus "$CPUS" --memory "$MEM" --disk "$DISK" > /dev/null
 echo "✅ VM '${VM_NAME}' launched successfully."
 
@@ -134,21 +139,35 @@ else
     echo "⚙️  [PROD] Skipping local directory mount as per production setup."
 fi
 
+STAGE_DESC="Applying Initial VM Configuration"
+echo ""
+echo "🚀 Stage [$CURRENT_STAGE/10]: $STAGE_DESC..."
+((CURRENT_STAGE++))
+echo "⚙️  Configuring package manager for non-interactive mode..."
+NEEDRESTART_CONFIG=$(cat <<'EOC'
+$nrconf{restart} = 'a';
+$nrconf{ui} = 'Noninteractive';
+$nrconf{kernelhints} = -1;
+EOC
+)
+multipass exec "$VM_NAME" -- sudo bash -c "cat > /etc/needrestart/conf.d/99-non-interactive.conf" <<< "$NEEDRESTART_CONFIG"
+echo "✅ System configured for silent updates."
+
 STAGE_DESC="Configuring SSH Access"
 echo ""
-echo "🚀 Stage [$CURRENT_STAGE/8]: $STAGE_DESC..."
+echo "🚀 Stage [$CURRENT_STAGE/10]: $STAGE_DESC..."
 ((CURRENT_STAGE++))
 
 echo "🔑 Generating SSH key for default 'ubuntu' user..."
-if [ -f "${SCRIPT_DIR}/${VM_SSH_KEY_PATH}" ]; then
+if [ -f "${VM_SSH_KEY_PATH}" ]; then
     echo "   Key already exists. Skipping creation."
 else
-    ssh-keygen -t ed25519 -f "${SCRIPT_DIR}/${VM_SSH_KEY_PATH}" -N "" -C "${USER}@${VM_NAME}" > /dev/null
+    ssh-keygen -t ed25519 -f "${VM_SSH_KEY_PATH}" -N "" -C "${USER}@${VM_NAME}" > /dev/null
     echo "   New SSH key generated."
 fi
 
 echo "⚙️  Transferring public key to '${VM_NAME}'..."
-multipass transfer "${SCRIPT_DIR}/${VM_SSH_KEY_PATH}.pub" "${VM_NAME}:/home/ubuntu/vm_key.pub" > /dev/null
+multipass transfer "${VM_SSH_KEY_PATH}.pub" "${VM_NAME}:/home/ubuntu/vm_key.pub" > /dev/null
 multipass exec "$VM_NAME" -- bash -c "mkdir -p /home/ubuntu/.ssh && cat /home/ubuntu/vm_key.pub >> /home/ubuntu/.ssh/authorized_keys && chmod 700 /home/ubuntu/.ssh && chmod 600 /home/ubuntu/.ssh/authorized_keys && chown -R ubuntu:ubuntu /home/ubuntu/.ssh && rm /home/ubuntu/vm_key.pub" > /dev/null
 echo "✅ Public key configured for 'ubuntu' user."
 
@@ -158,7 +177,7 @@ CONFIG_BLOCK="
 Host ${VM_NAME}
   HostName ${VM_IP}
   User ubuntu
-  IdentityFile ${SCRIPT_DIR}/${VM_SSH_KEY_PATH}
+  IdentityFile ${VM_SSH_KEY_PATH}
   IdentitiesOnly yes"
 
 SSH_CONFIG_TMP=$(mktemp)
@@ -180,15 +199,15 @@ else
     echo "✅ SSH alias '${VM_NAME}' added."
 fi
 
-STAGE_DESC="Installing Docker Engine"
+STAGE_DESC="Installing Docker Engine & Tools"
 echo ""
-echo "🚀 Stage [$CURRENT_STAGE/8]: $STAGE_DESC..."
+echo "🚀 Stage [$CURRENT_STAGE/10]: $STAGE_DESC..."
 ((CURRENT_STAGE++))
 
-echo "⚙️  Installing Docker prerequisites and Git..."
+echo "⚙️  Installing Docker prerequisites, Git, and JQ..."
 multipass exec "$VM_NAME" -- bash -c '
     sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get update -y > /dev/null
-    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common net-tools git > /dev/null
+    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common net-tools git jq > /dev/null
 '
 
 echo "⚙️  Adding Docker GPG key and repository..."
@@ -219,11 +238,33 @@ echo "🔍 Verifying Docker installation..."
 sleep 10
 multipass exec "$VM_NAME" -- bash -c "docker run hello-world > /dev/null 2>&1"
 multipass exec "$VM_NAME" -- bash -c "docker system prune -af > /dev/null 2>&1"
-echo "✅ Docker installed and verified successfully."
+echo "✅ Docker and tools installed and verified successfully."
+
+STAGE_DESC="Deploying CI/CD Scripts & Tools"
+echo ""
+echo "🚀 Stage [$CURRENT_STAGE/10]: $STAGE_DESC..."
+((CURRENT_STAGE++))
+
+echo "⚙️  Transferring all scripts to a temporary location on the VM..."
+multipass transfer --recursive "${REPO_ROOT}/scripts" "${VM_NAME}:/tmp/devops-setup-scripts" > /dev/null
+echo "✅ Scripts transferred."
+
+echo "⚙️  Installing global commands..."
+if [ "$ENV_TYPE" == "dev" ]; then
+    multipass exec "$VM_NAME" -- sudo cp /tmp/devops-setup-scripts/utils/project-init.sh /usr/local/bin/project-init
+    multipass exec "$VM_NAME" -- sudo cp /tmp/devops-setup-scripts/utils/publish.sh /usr/local/bin/publish
+    multipass exec "$VM_NAME" -- sudo cp /tmp/devops-setup-scripts/utils/notify.sh /usr/local/bin/notify
+    multipass exec "$VM_NAME" -- sudo chmod +x /usr/local/bin/*
+    echo "✅ Global commands 'project-init', 'publish', and 'notify' installed."
+else # prod
+    multipass exec "$VM_NAME" -- sudo cp /tmp/devops-setup-scripts/utils/notify.sh /usr/local/bin/notify
+    multipass exec "$VM_NAME" -- sudo chmod +x /usr/local/bin/notify
+    echo "✅ Global command 'notify' installed."
+fi
 
 STAGE_DESC="Setting up Local Docker Registry"
 echo ""
-echo "🚀 Stage [$CURRENT_STAGE/8]: $STAGE_DESC..."
+echo "🚀 Stage [$CURRENT_STAGE/10]: $STAGE_DESC..."
 if [ "$ENV_TYPE" == "prod" ]; then
     echo "📦 [PROD] Deploying self-hosted authenticated Docker registry..."
     multipass exec "$VM_NAME" -- bash -c '
@@ -254,7 +295,7 @@ fi
 
 STAGE_DESC="Installing Developer & Automation Tools"
 echo ""
-echo "🚀 Stage [$CURRENT_STAGE/8]: $STAGE_DESC..."
+echo "🚀 Stage [$CURRENT_STAGE/10]: $STAGE_DESC..."
 if [ "$ENV_TYPE" == "dev" ]; then
     echo "📦 [DEV] Installing Python 3.13 and tools..."
     multipass exec "$VM_NAME" -- bash -c '
@@ -272,13 +313,13 @@ if [ "$ENV_TYPE" == "dev" ]; then
     echo "✅ [DEV] 'automation' user created and added to docker group."
 
     echo "🔑 [DEV] Generating SSH key for 'automation' user..."
-    if [ -f "${SCRIPT_DIR}/${AUTOMATION_SSH_KEY_PATH}" ]; then
+    if [ -f "${AUTOMATION_SSH_KEY_PATH}" ]; then
         echo "   Key already exists. Skipping creation."
     else
-        ssh-keygen -t ed25519 -f "${SCRIPT_DIR}/${AUTOMATION_SSH_KEY_PATH}" -N "" -C "automation@${VM_NAME}" > /dev/null
+        ssh-keygen -t ed25519 -f "${AUTOMATION_SSH_KEY_PATH}" -N "" -C "automation@${VM_NAME}" > /dev/null
         echo "   New SSH key generated for 'automation' user."
     fi
-    multipass transfer "${SCRIPT_DIR}/${AUTOMATION_SSH_KEY_PATH}.pub" "${VM_NAME}:/tmp/automation_key.pub" > /dev/null
+    multipass transfer "${AUTOMATION_SSH_KEY_PATH}.pub" "${VM_NAME}:/tmp/automation_key.pub" > /dev/null
     multipass exec "$VM_NAME" -- sudo bash <<'END_SCRIPT_1'
         mkdir -p /home/automation/.ssh
         mv /tmp/automation_key.pub /home/automation/.ssh/automation_key.pub
@@ -290,26 +331,27 @@ if [ "$ENV_TYPE" == "dev" ]; then
 END_SCRIPT_1
     echo "✅ [DEV] SSH access configured for 'automation' user."
 
-    echo "🔑 Generating dedicated SSH key for GitHub..."
-    if [ -f "${SCRIPT_DIR}/${GITHUB_SSH_KEY_PATH}" ]; then
+    echo "🔑 [DEV] Generating dedicated GitHub SSH key for 'automation' user..."
+    GITHUB_SSH_KEY_PATH="${LOCAL_SSH_DIR}/${VM_NAME}_github.key"
+    if [ -f "${GITHUB_SSH_KEY_PATH}" ]; then
         echo "   Key already exists. Skipping creation."
     else
-        ssh-keygen -t ed25519 -f "${SCRIPT_DIR}/${GITHUB_SSH_KEY_PATH}" -N "" -C "github-${VM_NAME}" > /dev/null
+        ssh-keygen -t ed25519 -f "${GITHUB_SSH_KEY_PATH}" -N "" -C "github-automation-${VM_NAME}" > /dev/null
         echo "   New GitHub SSH key generated."
     fi
 
     echo ""
-    echo "❗ ACTION REQUIRED for ${VM_NAME} ❗"
+    echo "❗ ACTION REQUIRED for 'automation' user on ${VM_NAME} ❗"
     echo "   Please add the following public key to your main GitHub account:"
     echo "   Go to: https://github.com/settings/keys"
-    echo "   Click 'New SSH key', give it a title (e.g., '${VM_NAME}'), and paste the key below."
+    echo "   Click 'New SSH key', give it a title (e.g., 'automation-${VM_NAME}'), and paste the key below."
     echo "   --------------------------------------------------------------------------------"
-    cat "${SCRIPT_DIR}/${GITHUB_SSH_KEY_PATH}.pub" | sed 's/^/   /'
+    cat "${GITHUB_SSH_KEY_PATH}.pub" | sed 's/^/   /'
     echo "   --------------------------------------------------------------------------------"
     read -p "   Press [Enter] to continue once the key has been added to GitHub..."
 
-    echo "⚙️  Transferring and configuring private key on '${VM_NAME}'..."
-    multipass transfer "${SCRIPT_DIR}/${GITHUB_SSH_KEY_PATH}" "${VM_NAME}:/tmp/id_github" > /dev/null
+    echo "⚙️  [DEV] Transferring and configuring GitHub private key for 'automation' user..."
+    multipass transfer "${GITHUB_SSH_KEY_PATH}" "${VM_NAME}:/tmp/id_github" > /dev/null
     multipass exec "$VM_NAME" -- sudo bash <<'END_SCRIPT_2'
         mv /tmp/id_github /home/automation/.ssh/id_github
         chown automation:automation /home/automation/.ssh/id_github
@@ -318,24 +360,26 @@ END_SCRIPT_1
         chown automation:automation /home/automation/.ssh/config
 END_SCRIPT_2
 
-    echo "🔍 Testing GitHub SSH connection from VM..."
+    echo "🔍 [DEV] Testing GitHub SSH connection from 'automation' user..."
     auth_output=$(multipass exec "$VM_NAME" -- sudo --login --user automation ssh -T git@github.com 2>&1 || true)
     if echo "$auth_output" | grep -q "successfully authenticated"; then
-        echo "✅ GitHub authentication succeeded."
+        echo "✅ [DEV] GitHub authentication succeeded for 'automation' user."
     else
-        echo "❌ GitHub authentication failed! Please ensure the SSH key was added correctly."
+        echo "❌ GitHub authentication failed for 'automation' user!"
         echo "   GitHub's response:"
         echo "$auth_output" | sed 's/^/   | /'
         exit 1
     fi
 else
-    echo "⏭️  Skipping GitHub Integration for ${ENV_TYPE} environment."
+    echo "⏭️  Skipping Developer & Automation Tools install for ${ENV_TYPE} environment."
 fi
 ((CURRENT_STAGE++))
 
-STAGE_DESC="Applying Security Hardening"
+STAGE_DESC="Applying Security Hardening & Final Configuration"
 echo ""
-echo "🚀 Stage [$CURRENT_STAGE/8]: $STAGE_DESC..."
+echo "🚀 Stage [$CURRENT_STAGE/9]: $STAGE_DESC..."
+((CURRENT_STAGE++))
+
 if [ "$ENV_TYPE" == "prod" ]; then
     echo "🛡️  Installing UFW and Fail2Ban..."
     multipass exec "$VM_NAME" -- bash -c 'sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y ufw fail2ban > /dev/null'
@@ -352,11 +396,6 @@ if [ "$ENV_TYPE" == "prod" ]; then
 else
     echo "⏭️  Skipping security hardening for ${ENV_TYPE} environment."
 fi
-((CURRENT_STAGE++))
-
-STAGE_DESC="Finalizing Configuration"
-echo ""
-echo "🚀 Stage [$CURRENT_STAGE/8]: $STAGE_DESC..."
 
 echo "⚙️  Setting timezone to ${TIMEZONE}..."
 multipass exec "$VM_NAME" -- sudo timedatectl set-timezone "${TIMEZONE}" > /dev/null
@@ -385,6 +424,100 @@ if [ "$ENV_TYPE" == "dev" ]; then
     fi
 fi
 
+STAGE_DESC="Starting Background Services"
+echo ""
+echo "🚀 Stage [$CURRENT_STAGE/9]: $STAGE_DESC..."
+((CURRENT_STAGE++))
+
+# Generate notify.conf from .env variables
+NOTIFY_CONFIG=$(cat <<EOC
+[slack]
+bot_token="${SLACK_BOT_TOKEN}"
+default_channel="${SLACK_DEFAULT_CHANNEL}"
+
+[email]
+smtp_url="${EMAIL_SMTP_URL}"
+smtp_user="${EMAIL_SMTP_USER}"
+smtp_password="${EMAIL_SMTP_PASSWORD}"
+from_address="${EMAIL_FROM_ADDRESS}"
+default_recipient="${EMAIL_DEFAULT_RECIPIENT}"
+EOC
+)
+multipass exec "$VM_NAME" -- sudo bash -c "cat > /etc/notify.conf" <<< "$NOTIFY_CONFIG"
+multipass exec "$VM_NAME" -- sudo chmod 600 /etc/notify.conf
+echo "✅ /etc/notify.conf generated from .env secrets."
+
+if [ "$ENV_TYPE" == "dev" ]; then
+    echo "⚙️  [DEV] Setting up and starting CI runner service..."
+    PROD_IP=$(multipass info prod-server | grep IPv4 | awk '{print $2}')
+    multipass exec "$VM_NAME" -- sudo --login --user automation bash -c "
+        mkdir -p ~/ci-runner
+        cp /tmp/devops-setup-scripts/ci/ci_runner.sh ~/ci-runner/
+        cp /tmp/devops-setup-scripts/examples/projects.list.example ~/ci-runner/projects.list
+        chmod +x ~/ci-runner/ci_runner.sh
+    "
+    
+    CI_RUNNER_SERVICE=$(cat <<EOC
+[Unit]
+Description=Self-Hosted CI Runner Service
+After=network-online.target
+
+[Service]
+User=automation
+Group=automation
+WorkingDirectory=/home/automation/ci-runner
+ExecStart=/home/automation/ci-runner/ci_runner.sh ${PROD_IP} ${REGISTRY_PORT} 60
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOC
+)
+    multipass exec "$VM_NAME" -- sudo bash -c "cat > /etc/systemd/system/ci-runner.service" <<< "$CI_RUNNER_SERVICE"
+    multipass exec "$VM_NAME" -- sudo systemctl daemon-reload
+    multipass exec "$VM_NAME" -- sudo systemctl enable ci-runner.service
+    multipass exec "$VM_NAME" -- sudo systemctl start ci-runner.service
+    echo "✅ CI runner is now running in the background."
+
+else # prod
+    echo "⚙️  [PROD] Setting up and starting deployment poller service..."
+    multipass exec "$VM_NAME" -- bash -c "
+        mkdir -p /home/ubuntu/deploy-runner
+        cp /tmp/devops-setup-scripts/cd/deploy.sh /home/ubuntu/deploy-runner/
+        cp /tmp/devops-setup-scripts/cd/deployment_poller.sh /home/ubuntu/deploy-runner/
+        cp /tmp/devops-setup-scripts/examples/projects-prod.list.example /home/ubuntu/deploy-runner/projects-prod.list
+        chmod +x /home/ubuntu/deploy-runner/*.sh
+    "
+
+    DEPLOYMENT_POLLER_SERVICE=$(cat <<EOC
+[Unit]
+Description=Deployment Poller Service
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/deploy-runner
+ExecStart=/home/ubuntu/deploy-runner/deployment_poller.sh ${REGISTRY_PORT} 60
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOC
+)
+    multipass exec "$VM_NAME" -- sudo bash -c "cat > /etc/systemd/system/deployment-poller.service" <<< "$DEPLOYMENT_POLLER_SERVICE"
+    multipass exec "$VM_NAME" -- sudo systemctl daemon-reload
+    multipass exec "$VM_NAME" -- sudo systemctl enable deployment-poller.service
+    multipass exec "$VM_NAME" -- sudo systemctl start deployment-poller.service
+    echo "✅ Deployment poller is now running in the background."
+fi
+
+# Final cleanup of transferred scripts
+multipass exec "$VM_NAME" -- sudo rm -rf /tmp/devops-setup-scripts
+
 echo ""
 echo "🎉 =============================================== 🎉"
 echo "      Setup for ${VM_NAME} is complete!              "
@@ -396,7 +529,7 @@ if [ "$ENV_TYPE" == "dev" ]; then
 Host ${AUTOMATION_ALIAS}
   HostName ${VM_IP}
   User automation
-  IdentityFile ${SCRIPT_DIR}/${AUTOMATION_SSH_KEY_PATH}
+  IdentityFile ${AUTOMATION_SSH_KEY_PATH}
   IdentitiesOnly yes
 "
     AUTOMATION_SSH_CONFIG_TMP=$(mktemp)
@@ -415,4 +548,13 @@ Host ${AUTOMATION_ALIAS}
     echo "      Connect as automation user with: ssh ${AUTOMATION_ALIAS}"
 fi
 echo "🎉 =============================================== 🎉"
-
+echo ""
+echo "💡 NEXT STEPS:"
+if [ "$ENV_TYPE" == "dev" ]; then
+    echo "   1. SSH into the dev server as the automation user: ssh dev-server-automation"
+    echo "   2. Edit the project list: nano ~/ci-runner/projects.list"
+    echo "   3. Add your project secret files to: ~/secrets/<project_name>/"
+else # prod
+    echo "   1. SSH into the prod server: ssh prod-server"
+    echo "   2. Edit the project list: nano ~/deploy-runner/projects-prod.list"
+fi
