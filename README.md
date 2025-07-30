@@ -3,11 +3,20 @@
 Scripts to automate the setup of a self-hosted CI/CD environment using Multipass and Docker.  
 This repository provides the foundation for a secure, private development and production server infrastructure for personal projects.
 
----
+## Table of Contents
+
+- [Architecture Overview](#architecture-overview)
+- [Scripts in this Repository](#scripts-in-this-repository)
+- [End-to-End Setup and Usage](#end-to-end-setup-and-usage)
+  - [Step 1: Provision the Infrastructure](#step-1-provision-the-infrastructure-one-time-setup)
+  - [Step 2: Configure Your Projects](#step-2-configure-your-projects)
+  - [Step 3: Using the Pipeline](#step-3-using-the-pipeline)
+- [Standalone Utility Scripts](#standalone-utility-scripts)
+- [License](#license)
 
 ## Architecture Overview
 
-This setup creates a professional "pull-based" CI/CD model, where the `docker-compose.yml` is treated as version-controlled application code, ensuring consistent deployments, keeping your production environment secure and minimal.
+This setup creates a professional "pull-based" CI/CD model, where the `docker-compose.yml` is treated as version-controlled application code, ensuring consistent deployments while keeping your production environment secure and minimal.
 
 1. **`dev-server` (Build Server):**  
    Acts as a self-hosted CI runner. It checks out code from a Git remote, builds Docker images, pushes them to the production registry, and securely copies the project's configuration (including `docker-compose.yml`) to the production server.
@@ -16,166 +25,148 @@ This setup creates a professional "pull-based" CI/CD model, where the `docker-co
    A minimal, secure server whose only job is to run the Docker registry and the final application containers.  
    It actively monitors the registry for new images and automatically pulls and deploys them when found.
 
----
-
 ## Scripts in this Repository
 
-This repository provides the scripts to provision and manage the self-hosted CI/CD pipeline.
+This repository contains a collection of scripts that work together to create and manage the CI/CD pipeline.  
+The main `setup_vm.sh` script automatically deploys and configures all the other scripts.
 
-- **`scripts/provision/setup_vm.sh`:**  
-  The foundational script. Provisions the `dev-server` and `prod-server` VMs with all necessary tools, security hardening, and configurations.
+- `scripts/provision/setup_vm.sh`:  
+  The master orchestration script. It provisions the VMs and deploys the entire CI/CD toolchain.
 
-- **`scripts/ci/ci_runner.sh`:**  
-  The self-hosted CI script that runs on the `dev-server` to monitor, build, and push new releases.
+- `scripts/ci/ci_runner.sh`:  
+  The self-hosted CI service that runs on the `dev-server`.
 
-- **`scripts/cd/deployment_poller.sh`:**  
-  The self-hosted CD script that runs on the `prod-server` to monitor the registry and trigger deployments.
+- `scripts/cd/deployment_poller.sh`:  
+  The self-hosted CD service that runs on the `prod-server`.
 
-- **`scripts/cd/deploy.sh`:**  
-  The script that performs the zero-downtime deployment on the `prod-server`.
+- `scripts/cd/deploy.sh`:  
+  The script that performs the zero-downtime deployment.
 
-- **`scripts/utils/project-init.sh`:**  
-  An interactive utility script to set up a new project with the required CI/CD configuration files.
+- `scripts/utils/project-init.sh`:  
+  A global command to set up a new project.
 
-- **`scripts/utils/publish.sh`:**  
-  A global command to automate the release process for a project from the `dev-server`.
+- `scripts/utils/publish.sh`:  
+  A global command to publish a new release.
 
-- **`scripts/utils/notify.sh`:**  
-  A global notification utility script for sending messages to Slack and Email.
+- `scripts/utils/notify.sh`:  
+  A global command for sending notifications.
 
-- **`scripts/install/install_docker.sh`:**  
-  A standalone utility script to install Docker and Git on a fresh Ubuntu system.
+- `scripts/install/install_docker.sh` & `uninstall_docker.sh`:  
+  Standalone utility scripts for manual Docker management.
 
-- **`scripts/install/uninstall_docker.sh`:**  
-  A standalone utility script to completely remove Docker and Git from a system.
+## End-to-End Setup and Usage
 
----
+### Step 1: Provision the Infrastructure (One-Time Setup)
 
-## Getting Started: Provisioning the Infrastructure
+The first and only setup step is to run the master `setup_vm.sh` script.
 
-The first step is to use the `setup_vm.sh` script to create your servers.
+1. **Prerequisites:**  
+   Ensure you have [Multipass](https://canonical.com/multipass/install) installed on your local machine.
 
-### 1. Prerequisites
+2. **Configure:**  
+   The script is configured using a `.env` file. If one doesn't exist, the script will create a template for you.  
+   **Fill this file with your secrets** (especially `REGISTRY_PASSWORD` and `SLACK_BOT_TOKEN`) before proceeding.
 
-Before running the setup script, you must have the following installed on your local machine:
+3. **Execute:**
 
-- [Multipass](https://canonical.com/multipass/install)
+```bash
+chmod +x scripts/provision/setup_vm.sh
 
-### 2. Provision the VMs
+# First, set up the production server:
+./scripts/provision/setup_vm.sh prod
 
-1. **Configure the Environment:**  
-   The script is configured using a `.env` file. If you run the script without one, it will automatically generate a template for you.  
-   **Set a strong `REGISTRY_PASSWORD`** before proceeding.
+# Second, set up the development server:
+./scripts/provision/setup_vm.sh dev /Users/your-user/Developer
+````
 
-2. **Make the script executable:**
+This single script will provision the VMs, harden the production server, and install/configure all the necessary scripts and background services.
 
-   ```bash
-   chmod +x scripts/provision/setup_vm.sh
-   ```
+### Step 2: Configure Your Projects
 
-3. **Run the script (in order):**
+After the setup script is complete, your CI/CD pipeline is running. The final step is to tell it which projects to manage.
 
-   - First, set up the production server:
+1. **Add Projects to the CI Runner:**
 
-     ```bash
-     ./scripts/provision/setup_vm.sh prod
-     ```
+   * Connect to the `dev-server` as the automation user:
+     `ssh dev-server-automation`
+   * Edit the project list:
+     `vim ~/ci-runner/projects.list`
+   * Add the full Git SSH URLs for the repositories you want to monitor.
 
-   - Second, set up the development server (replace the path with your own):
+2. **Add Projects to the CD Poller:**
 
-     ```bash
-     ./scripts/provision/setup_vm.sh dev /Users/your-user/Developer
-     ```
+   * Connect to the `prod-server`:
+     `ssh prod-server`
+   * Edit the project list:
+     `vim ~/deploy-runner/projects-prod.list`
+   * Add the `project_name` for each repository you want to deploy.
 
-### 3. Connect to Your VMs
+3. **Add Project Secrets:**
 
-The setup script automatically adds aliases to your local `~/.ssh/config` file. You can connect to your new servers with these simple commands:
+   * On the `dev-server` as the `automation` user, create a directory for each project's secrets:
+     `mkdir -p ~/secrets/my-project-name`
+   * Place the production configuration files (e.g., `.env`, `prod-config.json`) inside this directory.
+     The CI runner will automatically sync them to the `prod-server`.
 
-- **Connect to the Dev Server (as the developer user):**
+### Step 3: Using the Pipeline
 
-  ```bash
-  ssh dev-server
-  ```
+Once configured, the workflow is simple:
 
-- **Connect to the Dev Server (as the automation user):**
+1. **Initialize a new project** using the `project-init` command on the `dev-server`.
+2. **Develop your application.**
+3. **Publish a new release** using the `publish` command from your project directory on the `dev-server`.
 
-  ```bash
-  ssh dev-server-automation
-  ```
+The rest of the process is fully automated.
 
-- **Connect to the Prod Server:**
+## Standalone Utility Scripts
 
-  ```bash
-  ssh prod-server
-  ```
+For manual administration or use outside the main pipeline, the following scripts can be run directly.
 
----
+* **To initialize a new project:**
 
-## Utility Scripts
+```bash
+# Run this from an empty project directory
+chmod +x scripts/utils/project-init.sh
+./scripts/utils/project-init.sh
+```
 
-This repository also contains standalone scripts for system administration and development workflows.
+* **To publish a new release:**
 
-- **To initialize a new project:**
+```bash
+# This script should be installed as a global command.
+# Installation:
+sudo cp scripts/utils/publish.sh /usr/local/bin/publish && sudo chmod +x /usr/local/bin/publish
 
-  ```bash
-  # Run this from an empty project directory on your dev-server
-  chmod +x scripts/utils/project-init.sh
-  ./scripts/utils/project-init.sh
-  ```
+# Usage (from a project directory):
+publish
+```
 
-- **To publish a new release:**
+* **To send a notification:**
 
-  ```bash
-  # Installation:
-  sudo cp scripts/utils/publish.sh /usr/local/bin/publish && sudo chmod +x /usr/local/bin/publish
+```bash
+# This script should be installed as a global command.
+# Installation:
+sudo cp scripts/utils/notify.sh /usr/local/bin/notify && sudo chmod +x /usr/local/bin/notify
 
-  # Usage (from a project directory):
-  publish
-  ```
+# Usage:
+notify --channel slack "Hello!"
+```
 
-- **To run the CI process (as the automation user on `dev-server`):**
+* **To install Docker and Git on any Ubuntu machine:**
 
-  ```bash
-  # This script monitors for new releases and builds/pushes images.
-  # It should be configured and run in the background.
-  chmod +x scripts/ci/ci_runner.sh
-  nohup ./scripts/ci/ci_runner.sh <prod_ip> <port> <interval> &
-  ```
+```bash
+chmod +x scripts/install/install_docker.sh
+./scripts/install/install_docker.sh
+```
 
-- **To run the CD process (on `prod-server`):**
+* **To completely remove Docker and Git:**
 
-  ```bash
-  # This script monitors the registry and deploys new images.
-  # It should be configured and run in the background.
-  chmod +x scripts/cd/deployment_poller.sh scripts/cd/deploy.sh
-  nohup ./scripts/cd/deployment_poller.sh <port> <interval> &
-  ```
-
-- **To send a notification (requires manual setup of `/etc/notify.conf`):**
-
-  ```bash
-  # Installation:
-  sudo cp scripts/utils/notify.sh /usr/local/bin/notify && sudo chmod +x /usr/local/bin/notify
-
-  notify --channel slack "Hello!"
-  ```
-
-- **To install Docker and Git on any Ubuntu machine:**
-
-  ```bash
-  chmod +x scripts/install/install_docker.sh
-  ./scripts/install/install_docker.sh
-  ```
-
-- **To completely remove Docker and Git:**
-
-  ```bash
-  chmod +x scripts/install/uninstall_docker.sh
-  ./scripts/install/uninstall_docker.sh
-  ```
-
----
+```bash
+chmod +x scripts/install/uninstall_docker.sh
+./scripts/install/uninstall_docker.sh
+```
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+This project is licensed under the MIT License.
+See the `LICENSE` file for details.
