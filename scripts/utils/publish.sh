@@ -61,9 +61,9 @@ function ask() {
 function parse_yaml {
    local prefix=$2
    local s='[[:space:]]*' w='[a-zA-Z0-9_]*' fs=$(echo @|tr @ '\034')
-   sed -ne "s|^\($s\)\($w\)$s:$s\"\(.*\)\"$s\$|\1$w: \3|p" \
-        -e "s|^\($s\)\($w\)$s:$s'\(.*\)'$s\$|\1$w: \3|p" \
-        -e "s|^\($s\)\($w\)$s:$s\(.*\)$s\$|\1$w: \3|p"  $1 |
+   sed -ne "s|^\($s\)\($w\)$s:$s\"\(.*\)\"$s\$|\2: \3|p" \
+    -e "s|^\($s\)\($w\)$s:$s'\(.*\)'$s\$|\2: \3|p" \
+    -e "s|^\($s\)\($w\)$s:$s\(.*\)$s\$|\2: \3|p" $1 |
    awk -F': ' '{
       key = $1;
       sub(/^ */, "", key);
@@ -77,18 +77,31 @@ function parse_yaml {
 function run_steps {
     local step_type=$1
     echo "⚙️  Running ${step_type} steps..."
-    local steps_file=$(mktemp)
-    awk "/${step_type}:/,/^[a-zA-Z]/{if(/^-/){print substr(\$0,3)}}" publish.yml > "$steps_file"
-    
+
+    local steps_file
+    steps_file=$(mktemp)
+
+    # Use correct quoting to pass the step_type into awk
+    awk -v key="$step_type" '
+        $0 ~ "^[[:space:]]*" key ":" { in_block=1; next }
+        in_block && $0 ~ "^[[:space:]]*[a-zA-Z_]+:" { in_block=0 }
+        in_block && $0 ~ "^[[:space:]]*-" {
+            sub(/^[[:space:]]*-[[:space:]]*/, "")
+            print
+        }
+    ' publish.yml > "$steps_file"
+
     while IFS= read -r step; do
         if [ -n "$step" ]; then
-            local expanded_step=$(eval echo "$step")
+            local expanded_step
+            expanded_step=$(echo "$step" | envsubst)
             echo "   | Executing: $expanded_step"
             if ! $DRY_RUN; then
                 eval "$expanded_step"
             fi
         fi
     done < "$steps_file"
+
     rm "$steps_file"
     echo "✅ ${step_type} steps completed successfully."
 }
@@ -254,7 +267,7 @@ else
     echo "$NEW_VERSION" > "$VERSION_FILE"
     
     echo "   | Updating image tag in 'docker-compose.yml'..."
-    sed -i -E "s|image:.*${PROJECT_NAME}:.*|image: \${REGISTRY_URL}/${PROJECT_NAME}:${NEW_VERSION}|g" docker-compose.yml
+    sed -E "s|image:.*${PROJECT_NAME}:.*|image: \${REGISTRY_URL}/${PROJECT_NAME}:${NEW_VERSION}|g" docker-compose.yml > docker-compose.yml.tmp && mv docker-compose.yml.tmp docker-compose.yml
     
     git add "$VERSION_FILE" docker-compose.yml
     git commit -m "chore: Bump version to ${NEW_VERSION}"

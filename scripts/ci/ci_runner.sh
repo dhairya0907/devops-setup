@@ -3,7 +3,7 @@
 # ==============================================================================
 # Self-Hosted CI Runner Script
 # Version: 2.0.0
-# Date: 2025-07-29
+# Date: 2025-07-31
 # ==============================================================================
 #
 # Description:
@@ -57,20 +57,28 @@ REGISTRY_URL="${PROD_SERVER_IP}:${REGISTRY_PORT}"
 # Sets up the logging by redirecting all output to a log file.
 function setup_logging() {
     mkdir -p "$(dirname "$LOG_FILE")"
-    # Rotate the previous log file if it exists
-    [ -f "$LOG_FILE" ] && mv "$LOG_FILE" "${LOG_FILE}.1"
-    # Redirect all stdout and stderr to the log file for the rest of the script's execution
-    exec &> "$LOG_FILE"
-    echo "Log file initialized at $(date)"
+
+    local log_dir
+    log_dir=$(dirname "$LOG_FILE")
+    local base_name
+    base_name=$(basename "$LOG_FILE" .log)
+    local current_date
+    current_date=$(date +%F)
+    local todays_log="${log_dir}/${base_name}_${current_date}.log"
+
+    find "$log_dir" -name "${base_name}_*.log" -mtime +1 -delete
+
+    exec >> "$todays_log" 2>&1
+    echo "Log initialized at $(date)"
 }
 
 # Parses key-value pairs from the publish.yml configuration file.
 function parse_yaml {
    local prefix=$2
    local s='[[:space:]]*' w='[a-zA-Z0-9_]*' fs=$(echo @|tr @ '\034')
-   sed -ne "s|^\($s\)\($w\)$s:$s\"\(.*\)\"$s\$|\1$w: \3|p" \
-        -e "s|^\($s\)\($w\)$s:$s'\(.*\)'$s\$|\1$w: \3|p" \
-        -e "s|^\($s\)\($w\)$s:$s\(.*\)$s\$|\1$w: \3|p"  $1 |
+   sed -ne "s|^\($s\)\($w\)$s:$s\"\(.*\)\"$s\$|\2: \3|p" \
+    -e "s|^\($s\)\($w\)$s:$s'\(.*\)'$s\$|\2: \3|p" \
+    -e "s|^\($s\)\($w\)$s:$s\(.*\)$s\$|\2: \3|p" $1 |
    awk -F': ' '{
       key = $1;
       sub(/^ */, "", key);
@@ -86,12 +94,10 @@ function get_latest_tag() {
     local bare_repo_dir=$2
 
     if [ ! -d "$bare_repo_dir" ]; then
-        echo "   | Bare repository not found. Cloning for the first time..."
-        git clone --bare "$repo_url" "$bare_repo_dir" > /dev/null 2>&1
+        git clone --bare "$repo_url" "$bare_repo_dir"
     fi
 
-    echo "   | Fetching latest tags from remote..."
-    git --git-dir="$bare_repo_dir" fetch --tags --force > /dev/null 2>&1
+    git --git-dir="$bare_repo_dir" fetch --tags --force
     
     # Find the latest tag using version-sort, then return it.
     git --git-dir="$bare_repo_dir" tag --list --sort=-v:refname | head -n 1
@@ -108,12 +114,25 @@ function build_and_push() {
     local image_name="${REGISTRY_URL}/${project_name}:${tag#v}" # Removes the 'v' prefix for the image tag
 
     echo "   | Building Docker image: ${image_name}"
-    docker build -t "$image_name" "$temp_clone_dir" > /dev/null
+    DOCKERFILE_PATH="${temp_clone_dir}/docker/Dockerfile"
+    if [ ! -f "$DOCKERFILE_PATH" ]; then
+        echo "❌ Dockerfile not found at $DOCKERFILE_PATH"
+        return 1
+    fi
+
+    if ! docker build -t "$image_name" -f "$DOCKERFILE_PATH" "$temp_clone_dir"; then
+        echo "❌ Docker build failed."
+        return 1
+    fi
 
     echo "   | Pushing image to registry..."
-    docker push "$image_name" > /dev/null
+    if ! docker push "$image_name"; then
+        echo "❌ Docker push failed."
+        return 1
+    fi
 
     echo "   | Build and push complete."
+    return 0
 }
 
 # Syncs configuration (docker-compose.yml and secrets) to the production server.
@@ -123,28 +142,27 @@ function sync_configs() {
     local local_secrets_dir="/home/automation/secrets/${project_name}"
     local remote_project_dir="/home/ubuntu/${project_name}"
 
-    echo "   | Syncing configuration files to production server..."
-    # Ensure the remote project directory exists
-    ssh "ubuntu@${PROD_SERVER_IP}" "mkdir -p ${remote_project_dir}"
+    local ssh_opts="-i /home/automation/.ssh/id_prod_server -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 
-    # Copy the docker-compose.yml from the cloned repository
-    scp "${temp_clone_dir}/docker-compose.yml" "ubuntu@${PROD_SERVER_IP}:${remote_project_dir}/docker-compose.yml" > /dev/null
+    echo "   | Syncing configuration files to production server..."
+    
+    ssh $ssh_opts "ubuntu@${PROD_SERVER_IP}" "mkdir -p ${remote_project_dir}"
+
+    scp $ssh_opts "${temp_clone_dir}/docker-compose.yml" "ubuntu@${PROD_SERVER_IP}:${remote_project_dir}/docker-compose.yml"
     echo "   | -> docker-compose.yml synced."
 
-    # Copy any files from the corresponding secrets directory
     if [ -d "$local_secrets_dir" ]; then
-        # Use scp to securely copy the entire directory contents
-        scp -r "${local_secrets_dir}/." "ubuntu@${PROD_SERVER_IP}:${remote_project_dir}/" > /dev/null
+        scp $ssh_opts -r "${local_secrets_dir}/." "ubuntu@${PROD_SERVER_IP}:${remote_project_dir}/"
         echo "   | -> Secrets directory synced successfully."
     else
         echo "   | -> No secrets directory found at '${local_secrets_dir}'. Skipping."
     fi
+    return 0
 }
 
 
 # --- MAIN LOOP ---
 
-# Call the logging setup function once at the start.
 setup_logging
 
 echo "🚀 CI Runner started. Monitoring for new releases..."
@@ -154,15 +172,15 @@ mkdir -p "${BASE_DIR}/state"
 
 if [ ! -f "$PROJECT_LIST_FILE" ]; then
     echo "❌ Error: Project list file not found at ${PROJECT_LIST_FILE}" >&2
-    echo "   Please create it and add your repository URLs." >&2
     exit 1
 fi
 
 while true; do
-    # Read the projects.list file into an array, ignoring comments and empty lines
-    mapfile -t PROJECTS_TO_MONITOR < <(grep -v -e '^#' -e '^[[:space:]]*$' "$PROJECT_LIST_FILE")
+    mapfile -t PROJECTS_TO_MONITOR < <(grep -v -e '^#' -e '^[[:space:]]*$' "$PROJECT_LIST_FILE" || true)
     
     for repo_url in "${PROJECTS_TO_MONITOR[@]}"; do
+        if [ -z "$repo_url" ]; then continue; fi
+
         repo_name=$(basename "$repo_url" .git)
         bare_repo_dir="${BASE_DIR}/repos/${repo_name}.git"
         state_file="${BASE_DIR}/state/${repo_name}_last_tag.txt"
@@ -182,23 +200,33 @@ while true; do
         elif [ "$latest_tag" != "$last_deployed_tag" ]; then
             echo "✅ New release found! Version: ${latest_tag}"
             
-            # Perform a single clone for this release process
             temp_clone_dir="${BASE_DIR}/clones/${repo_name}"
             rm -rf "$temp_clone_dir"
-            git clone --branch "$latest_tag" "$repo_url" "$temp_clone_dir" > /dev/null 2>&1
+            git clone --branch "$latest_tag" "$repo_url" "$temp_clone_dir"
             
-            # Read the project_name from the publish.yml inside the clone
             eval $(parse_yaml "${temp_clone_dir}/publish.yml" "config_")
             PROJECT_NAME_FROM_CONFIG=${config_project_name}
+
+            if [ -z "$PROJECT_NAME_FROM_CONFIG" ]; then
+                echo "❌ Error: 'project_name' not found in publish.yml for ${repo_url}"
+                rm -rf "$temp_clone_dir"
+                continue
+            fi
             
-            build_and_push "$temp_clone_dir" "$latest_tag" "$PROJECT_NAME_FROM_CONFIG"
-            sync_configs "$PROJECT_NAME_FROM_CONFIG" "$temp_clone_dir"
-
-            # Clean up the temporary clone after all operations are complete
+            if build_and_push "$temp_clone_dir" "$latest_tag" "$PROJECT_NAME_FROM_CONFIG"; then
+                # Only sync configs if the build and push were successful
+                if sync_configs "$PROJECT_NAME_FROM_CONFIG" "$temp_clone_dir"; then
+                    # Only update the state file if everything was successful
+                    echo "$latest_tag" > "$state_file"
+                    echo "🎉 Successfully processed release ${latest_tag} for ${PROJECT_NAME_FROM_CONFIG}."
+                else
+                    echo "❌ Config sync failed for release ${latest_tag}."
+                fi
+            else
+                echo "❌ Build and push failed for release ${latest_tag}. Halting process for this project."
+            fi
+            
             rm -rf "$temp_clone_dir"
-
-            echo "$latest_tag" > "$state_file"
-            echo "🎉 Successfully processed release ${latest_tag} for ${PROJECT_NAME_FROM_CONFIG}."
         else
             echo "   | Already up-to-date with latest release (${latest_tag})."
         fi

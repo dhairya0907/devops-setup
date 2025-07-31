@@ -2,8 +2,8 @@
 
 # ==============================================================================
 # Deployment Poller Script
-# Version: 1.0.0
-# Date: 2025-07-29
+# Version: 2.0.0
+# Date: 2025-07-31
 # ==============================================================================
 #
 # Description:
@@ -17,7 +17,7 @@
 #   1. Create a projects-prod.list file at /home/ubuntu/deploy-runner/projects-prod.list
 #   2. Place this script and `deploy.sh` in /home/ubuntu/deploy-runner/
 #   3. Make them executable: `chmod +x deployment_poller.sh deploy.sh`
-#   4. Run this script in the background: `nohup ./deployment_poller.sh <registry_port> <check_interval_seconds> &`
+#   4. Run this script in the background: `nohup ./deployment_poller.sh <registry_port> <check_interval> <user> <pass> &`
 #   5. Monitor its activity: `tail -f /home/ubuntu/deploy-runner/logs/poller.log`
 #
 # ==============================================================================
@@ -26,14 +26,16 @@ set -e
 trap 'echo "❌ An error occurred in the deployment poller. Restarting in 60 seconds..."' ERR
 
 # --- ARGUMENT VALIDATION ---
-if [ "$#" -ne 2 ]; then
+if [ "$#" -ne 4 ]; then
     echo "❌ Error: Invalid arguments." >&2
-    echo "Usage: $0 <registry_port> <check_interval_seconds>" >&2
+    echo "Usage: $0 <registry_port> <check_interval_seconds> <registry_user> <registry_password>" >&2
     exit 1
 fi
 
 REGISTRY_PORT=$1
 CHECK_INTERVAL=$2
+REGISTRY_USER=$3
+REGISTRY_PASSWORD=$4
 
 # --- CONFIGURATION ---
 
@@ -54,21 +56,27 @@ REGISTRY_URL="localhost:${REGISTRY_PORT}"
 # Sets up the logging by redirecting all output to a log file.
 function setup_logging() {
     mkdir -p "$(dirname "$LOG_FILE")"
-    # Rotate the previous log file if it exists
-    [ -f "$LOG_FILE" ] && mv "$LOG_FILE" "${LOG_FILE}.1"
-    # Redirect all stdout and stderr to the log file
-    exec &> "$LOG_FILE"
-    echo "Log file initialized at $(date)"
+
+    local log_dir
+    log_dir=$(dirname "$LOG_FILE")
+    local base_name
+    base_name=$(basename "$LOG_FILE" .log)
+    local current_date
+    current_date=$(date +%F)
+    local todays_log="${log_dir}/${base_name}_${current_date}.log"
+
+    find "$log_dir" -name "${base_name}_*.log" -mtime +1 -delete
+
+    exec >> "$todays_log" 2>&1
+    echo "Log initialized at $(date)"
 }
 
 # Queries the local Docker registry to find the latest version tag for a project.
 function get_latest_tag_from_registry() {
     local project_name=$1
     
-    echo "   | Querying registry for tags of '${project_name}'..."
-    # Use curl to hit the registry's API, jq to parse the JSON, and sort to find the latest version.
-    # The `|| true` prevents the script from exiting if the repo doesn't exist yet.
-    local latest_tag=$(curl -s "http://${REGISTRY_URL}/v2/${project_name}/tags/list" | jq -r '.tags[]' | sort -V | tail -n 1 || true)
+    # Use curl with the -u flag to provide the username and password for authentication.
+    local latest_tag=$(curl -s -u "${REGISTRY_USER}:${REGISTRY_PASSWORD}" "http://${REGISTRY_URL}/v2/${project_name}/tags/list" | jq -r '.tags[]' | sort -V | tail -n 1 || true)
     echo "$latest_tag"
 }
 
@@ -85,17 +93,17 @@ if [ ! -f "$PROJECT_LIST_FILE" ]; then
     exit 1
 fi
 
-# Check for jq, a required dependency for parsing JSON.
 if ! command -v jq &> /dev/null; then
     echo "❌ Error: 'jq' is not installed. Please install it with 'sudo apt-get install jq'." >&2
     exit 1
 fi
 
 while true; do
-    # Read the projects-prod.list file, ignoring comments and empty lines
-    mapfile -t PROJECTS_TO_MONITOR < <(grep -v -e '^#' -e '^[[:space:]]*$' "$PROJECT_LIST_FILE")
+    mapfile -t PROJECTS_TO_MONITOR < <(grep -v -e '^#' -e '^[[:space:]]*$' "$PROJECT_LIST_FILE" || true)
     
     for project_name in "${PROJECTS_TO_MONITOR[@]}"; do
+        if [ -z "$project_name" ]; then continue; fi
+        
         state_file="${BASE_DIR}/state/${project_name}_deployed_version.txt"
 
         echo "------------------------------------------------------------"
@@ -113,9 +121,10 @@ while true; do
         elif [ "$latest_tag" != "$current_deployed_tag" ]; then
             echo "✅ New image found! Version: ${latest_tag}. Triggering deployment..."
             
-            # Execute the deployment script, passing the project name, new tag, and registry port.
-            if ${BASE_DIR}/deploy.sh "$project_name" "$latest_tag" "$REGISTRY_PORT"; then
-                # Only update the state file if the deployment was successful.
+            echo "   | Authenticating with the registry..."
+            echo "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_URL}" --username "${REGISTRY_USER}" --password-stdin > /dev/null
+            
+            if "${BASE_DIR}/deploy.sh" "$project_name" "$latest_tag" "$REGISTRY_PORT"; then
                 echo "$latest_tag" > "$state_file"
                 echo "🎉 Successfully deployed version ${latest_tag} for ${project_name}."
             else

@@ -3,7 +3,7 @@
 # ==============================================================================
 # Deployment Script
 # Version: 2.0.0
-# Date: 2025-07-29
+# Date: 2025-07-31
 # ==============================================================================
 #
 # Description:
@@ -30,7 +30,8 @@ fi
 PROJECT_NAME=$1
 NEW_VERSION=$2
 REGISTRY_PORT=$3
-REGISTRY_URL="localhost:${REGISTRY_PORT}"
+
+export REGISTRY_URL="localhost:${REGISTRY_PORT}"
 
 PROJECTS_BASE_DIR="/home/ubuntu"
 PROJECT_DIR="${PROJECTS_BASE_DIR}/${PROJECT_NAME}"
@@ -58,7 +59,8 @@ cd "$PROJECT_DIR"
 echo "📝 Logging current container state..." | tee -a "$LOG_FILE"
 echo "---- $(date '+%Y-%m-%d %H:%M:%S') ----" >> "$LOG_FILE"
 
-docker ps --filter "name=${PROJECT_NAME}" --format "{{.Names}} -> {{.Image}}" | tee -a "$LOG_FILE"
+COMPOSE_PROJECT_NAME=$(basename "${PROJECT_DIR}")
+docker ps --filter "name=${COMPOSE_PROJECT_NAME}-${PROJECT_NAME}" --format "{{.Names}} -> {{.Image}}" | tee -a "$LOG_FILE"
 
 echo "🗂️  Logged current image(s) before deployment." | tee -a "$LOG_FILE"
 
