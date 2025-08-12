@@ -3,7 +3,7 @@
 # ==============================================================================
 # Self-Hosted CI Runner Script
 # Version: 2.0.0
-# Date: 2025-07-31
+# Date: 2025-08-12
 # ==============================================================================
 #
 # Description:
@@ -25,8 +25,8 @@
 # ==============================================================================
 
 set -e
-# The trap will now log the error to the file.
-trap 'echo "❌ An error occurred in the CI runner. Restarting in 60 seconds..."' ERR
+# The trap will now log the error to the file and notify Slack.
+trap 'echo "❌ An error occurred in the CI runner. Restarting in 60 seconds..."; notify_slack "❌ An error occurred in the CI runner. Restarting in 60 seconds..."' ERR
 
 # --- ARGUMENT VALIDATION ---
 if [ "$#" -ne 3 ]; then
@@ -50,9 +50,12 @@ PROJECT_LIST_FILE="${BASE_DIR}/projects.list"
 # The location for the log file.
 LOG_FILE="${BASE_DIR}/logs/ci_runner.log"
 
-# --- SCRIPT LOGIC ---
+# --- HELPER FUNCTIONS ---
 
-REGISTRY_URL="${PROD_SERVER_IP}:${REGISTRY_PORT}"
+function notify_slack() {
+    local message=$1
+    notify --channel slack "$message"
+}
 
 # Sets up the logging by redirecting all output to a log file.
 function setup_logging() {
@@ -160,6 +163,9 @@ function sync_configs() {
     return 0
 }
 
+# --- SCRIPT LOGIC ---
+
+REGISTRY_URL="${PROD_SERVER_IP}:${REGISTRY_PORT}"
 
 # --- MAIN LOOP ---
 
@@ -210,6 +216,7 @@ while true; do
             if [ -z "$PROJECT_NAME_FROM_CONFIG" ]; then
                 echo "❌ Error: 'project_name' not found in publish.yml for ${repo_url}"
                 rm -rf "$temp_clone_dir"
+                notify_slack "❌ Error: 'project_name' not found in publish.yml for repo *${repo_url}*."
                 continue
             fi
             
@@ -219,11 +226,14 @@ while true; do
                     # Only update the state file if everything was successful
                     echo "$latest_tag" > "$state_file"
                     echo "🎉 Successfully processed release ${latest_tag} for ${PROJECT_NAME_FROM_CONFIG}."
+                    notify_slack "🎉 Successfully processed release *${latest_tag}* for project *${PROJECT_NAME_FROM_CONFIG}*."
                 else
                     echo "❌ Config sync failed for release ${latest_tag}."
+                    notify_slack "❌ Config sync failed for release *${latest_tag}* of project *${PROJECT_NAME_FROM_CONFIG}*. Please check the logs."
                 fi
             else
                 echo "❌ Build and push failed for release ${latest_tag}. Halting process for this project."
+                notify_slack "❌ Build and push failed for release *${latest_tag}* of project *${PROJECT_NAME_FROM_CONFIG}*. Please check the logs."
             fi
             
             rm -rf "$temp_clone_dir"
